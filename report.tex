@@ -174,5 +174,49 @@ KL(p \parallel q)
 \noindent \textbf{Usage in VAEs:} \\
 In VAEs, the KL divergence between the approximate posterior \( q(z|x) \) and the prior \( p(z) \) is used as a regularization term in the Evidence Lower Bound (ELBO). When using discrete latent variables such as Bernoulli distributions, this exact KL expression allows us to compute the divergence in closed form and include it directly in the loss function, helping guide the encoder toward distributions close to the prior.
 This is crucial for ensuring that the latent space is well-structured and that the decoder can generate meaningful samples from the learned distribution.
+\subsection*{2a)}
+For this classification task involving RGB images of size $96 \times 96$, using a deep convolutional network like VGG-11 with Batch Normalization is a strong starting point. The original VGG-11 architecture was proposed in Simonyan and Zisserman (2015) and is known for its simplicity and effectiveness in image classification tasks.
+
+\medskip
+
+\noindent \textbf{Reasons for using VGG-11:}
+\begin{itemize}
+  \item It uses small \(3 \times 3\) convolutional filters, which are efficient and effective for capturing local features like edges and textures.
+  \item The architecture is relatively shallow compared to modern networks, which makes it easier to train without needing massive computational resources.
+  \item It has been shown to perform well on similar image classification tasks, especially when the number of classes is limited.
+\end{itemize}
+
+\noindent \textbf{Why Batch Normalization?}
+\begin{itemize}
+  \item BatchNorm helps stabilize training by normalizing the inputs to each layer, reducing internal covariate shift.
+  \item It allows the use of higher learning rates, which can speed up convergence.
+  \item It also acts as a form of regularization and can reduce the need for Dropout early in training.
+\end{itemize}
+
+\noindent Since our dataset is relatively small in terms of resolution and the number of classes (planes, ships, and trucks), VGG-11 with BatchNorm provides a good tradeoff between capacity and simplicity. It allows us to build a solid baseline model that is easy to modify and extend in later steps (e.g., adding Dropout, uncertainty estimation, etc.).
+\subsection*{2b)}
+
+Dropout is a regularization technique introduced to prevent overfitting in deep neural networks. It works by randomly "dropping out" (i.e., setting to zero) a fraction of the units in a layer during training. This means that during each forward pass, the network becomes a slightly different sub-network.
+
+\medskip
+
+\noindent \textbf{Mathematically:} For each unit \( h_i \) in a hidden layer, during training we sample a Bernoulli mask \( m_i \sim \text{Bern}(1 - p) \), and compute:
+
+\[
+\tilde{h}_i = m_i \cdot h_i
+\]
+
+where \( p \) is the dropout rate (e.g., 0.5). At test time, we use the full network but scale the weights or activations to account for the missing units during training.
+
+\medskip
+
+\noindent \textbf{Why it helps:}
+\begin{itemize}
+  \item Dropout prevents neurons from co-adapting too strongly to each other.
+  \item It acts like an ensemble of many subnetworks, improving generalization.
+  \item It’s particularly useful in fully connected layers, which are prone to overfitting when the dataset is small.
+\end{itemize}
+
+\noindent In our case, using Dropout is important since the dataset may not be large enough to justify using a large-capacity network without regularization. Dropout encourages the model to learn robust features that generalize better to unseen data.
 
 \end{document}
