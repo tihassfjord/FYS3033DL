@@ -218,5 +218,22 @@ where \( p \) is the dropout rate (e.g., 0.5). At test time, we use the full net
 \end{itemize}
 
 \noindent In our case, using Dropout is important since the dataset may not be large enough to justify using a large-capacity network without regularization. Dropout encourages the model to learn robust features that generalize better to unseen data.
+\subsection*{2c)}
+
+We modify the VGG-11 network to include Dropout layers after the two fully connected layers with 4096 units, as described in the assignment. The updated architecture includes the following in the classifier section:
+
+\begin{itemize}
+  \item Linear (512 × 3 × 3 → 4096), followed by ReLU and Dropout(0.5)
+  \item Linear (4096 → 4096), followed by ReLU and Dropout(0.5)
+  \item Linear (4096 → 3), corresponding to the three output classes
+\end{itemize}
+
+\noindent The Dropout layers randomly deactivate 50\% of the neurons during training, helping reduce overfitting and encouraging the network to learn more robust and redundant representations.
+
+\medskip
+
+\noindent \textbf{Discussion:} Including Dropout in the fully connected layers is particularly important in VGG-style networks, as these layers have a large number of parameters and are prone to overfitting — especially when the dataset is relatively small. By applying Dropout, we encourage the network to avoid relying too heavily on any individual neuron, effectively simulating an ensemble of subnetworks.
+
+Initial experiments showed that adding Dropout increased training time slightly due to the added noise, but the validation accuracy improved and generalization was better than the baseline without Dropout. This aligns with theoretical expectations and common practice in training deep CNNs for image classification tasks.
 
 \end{document}
