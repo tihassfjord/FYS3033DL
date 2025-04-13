@@ -1,13 +1,16 @@
-# %% [model.py]
-# NOTE: This cell simulates the contents of a file named model.py
-#       You can copy-paste it into an actual file if desired.
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class VGG11BN(nn.Module):
-    def __init__(self, num_classes=3, dropout=False):
+    def __init__(self, num_classes=3, dropout=False, in_channels=3):
+        """
+        VGG11 with batch normalization and dropout.
+        Args:
+            num_classes (int): Number of output classes.
+            dropout (bool): Whether to apply dropout or not.
+            in_channels (int): Number of input channels (default is 3 for RGB images).
+        """
         super(VGG11BN, self).__init__()
         self.num_classes = num_classes
         self.dropout = dropout
@@ -18,7 +21,7 @@ class VGG11BN(nn.Module):
         # Pool kernel size is 2, stride 2.
 
         self.features = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
@@ -79,6 +82,10 @@ class VGG11BN(nn.Module):
 
 if __name__ == "__main__":
     # Create a model instance for 3 classes (planes, ships, trucks) as required.
-    model_2a = VGG11BN(num_classes=3, dropout=False)
-    print(model_2a)
+    model_2a = VGG11BN(num_classes=3, dropout=True)
+    print(f'INFO : Model created with dropout=False, Total parameters: {sum(p.numel() for p in model_2a.parameters())}')
+
+    
+
+
 

@@ -1,6 +1,6 @@
 # Fdb version 4
-["pdflatex"] 1743458207.369 "c:/Users/tihas/OneDrive - UiT Office 365/A_UIT/FYS-3033/HOME_EXAM/FYS3033DL/doc/report.tex" "report.pdf" "report" 1743458209.43658 0
-  "c:/Users/tihas/OneDrive - UiT Office 365/A_UIT/FYS-3033/HOME_EXAM/FYS3033DL/doc/report.tex" 1743457592 12696 1a287e18b2d600b3b2097f130e203cd0 ""
+["pdflatex"] 1744577168.76563 "c:/Users/tihas/OneDrive - UiT Office 365/A_UIT/FYS-3033/HOME_EXAM/FYS3033DL/doc/report.tex" "report.pdf" "report" 1744577171.08946 0
+  "c:/Users/tihas/OneDrive - UiT Office 365/A_UIT/FYS-3033/HOME_EXAM/FYS3033DL/doc/report.tex" 1744577168 12992 fd05a32eab2ac4282354b784ccbac861 ""
   "c:/texlive/2024/texmf-dist/fonts/enc/dvips/cm-super/cm-super-t1.enc" 1714834938 2971 def0b6c1f0b107b3b936def894055589 ""
   "c:/texlive/2024/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.enc" 1714834938 2900 1537cc8184ad1792082cd229ecc269f4 ""
   "c:/texlive/2024/texmf-dist/fonts/map/fontname/texfonts.map" 1714836660 3524 cb3e574dea2d1052e39280babc910dc8 ""
@@ -289,9 +289,9 @@
   "c:/texlive/2024/texmf-var/fonts/map/pdftex/updmap/pdftex.map" 1714840645 5519690 1698f96789543a09b6b0e33aada59581 ""
   "c:/texlive/2024/texmf-var/web2c/pdftex/pdflatex.fmt" 1714840886 8225106 b8efe642e016975f01934a261460d0df ""
   "c:/texlive/2024/texmf.cnf" 1714840622 713 e69b156964470283e0530f5060668171 ""
-  "report.aux" 1743458209 277 767fde65f04593ac4e3385d082ed9b02 "pdflatex"
-  "report.out" 1743458208 0 d41d8cd98f00b204e9800998ecf8427e "pdflatex"
-  "report.tex" 1743457592 12696 1a287e18b2d600b3b2097f130e203cd0 ""
+  "report.aux" 1744577170 277 767fde65f04593ac4e3385d082ed9b02 "pdflatex"
+  "report.out" 1744577170 0 d41d8cd98f00b204e9800998ecf8427e "pdflatex"
+  "report.tex" 1744577168 12992 fd05a32eab2ac4282354b784ccbac861 ""
   (generated)
   "report.aux"
   "report.log"

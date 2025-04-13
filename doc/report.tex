@@ -232,8 +232,10 @@ We modify the VGG-11 network to include Dropout layers after the two fully conne
 
 \medskip
 
-\noindent \textbf{Discussion:} Including Dropout in the fully connected layers is particularly important in VGG-style networks, as these layers have a large number of parameters and are prone to overfitting — especially when the dataset is relatively small. By applying Dropout, we encourage the network to avoid relying too heavily on any individual neuron, effectively simulating an ensemble of subnetworks.
-
-Initial experiments showed that adding Dropout increased training time slightly due to the added noise, but the validation accuracy improved and generalization was better than the baseline without Dropout. This aligns with theoretical expectations and common practice in training deep CNNs for image classification tasks.
+\noindent \textbf{Discussion:} Including Dropout in the fully connected layers is particularly important in VGG-style networks, as these layers have a large number of parameters and are prone to overfitting — especially when the dataset is relatively small. By applying Dropout, we encourage the network to avoid relying too heavily on any individual neuron, effectively simulating an ensemble of subnetworks.\\
+\\
+Initial experiments showed that adding Dropout increased training time slightly due to the added noise, but the validation accuracy improved and generalization was better than the baseline without Dropout. This aligns with theoretical expectations and common practice in training deep CNNs for image classification tasks.\\
+\\
+Dropout is not really helpful in the conv layers since batch norm already regularizes things there, and convs have fewer parameters + weight sharing. But in the fully connected layers, there is way more risk of overfitting, so dropout can still make a difference even with batch norm.
 
 \end{document}
