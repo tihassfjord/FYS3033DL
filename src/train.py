@@ -22,6 +22,8 @@ def plot_confusion_matrix(model, dataloader, device, class_names=None):
     cm = confusion_matrix(y_true, y_pred)
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
     disp.plot(cmap='Blues')
+    plt.title('Confusion Matrix')
+    plt.savefig(f"plots/{model_name}_confusion_matrix.png")
 
 def evaluate_model(model, dataloader, criterion, device='cpu'):
     model.eval()
@@ -135,6 +137,7 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
     plt.legend()
 
     plt.tight_layout()
+    plt.savefig(f"plots/{model_name}_training.png", dpi=300, bbox_inches='tight')
     plt.show()
 
     return model

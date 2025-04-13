@@ -6,6 +6,24 @@ import torch.optim as optim
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+
+def plot_confusion_matrix(model, dataloader, device, class_names=None):
+    model.eval()
+    y_true, y_pred = [], []
+    with torch.no_grad():
+        for inputs, labels in dataloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, preds = torch.max(outputs, 1)
+            y_true.extend(labels.cpu().numpy())
+            y_pred.extend(preds.cpu().numpy())
+
+    cm = confusion_matrix(y_true, y_pred)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+    disp.plot(cmap='Blues')
+    plt.title('Confusion Matrix')
+    plt.savefig(f"plots/{model_name}_confusion_matrix.png")
 
 def evaluate_model(model, dataloader, criterion, device='cpu'):
     model.eval()
@@ -80,6 +98,8 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
             if phase == 'val' and epoch_acc > best_acc:
                 best_acc = epoch_acc
                 best_model_wts = model.state_dict()
+                torch.save(best_model_wts, 'best_model.pth')  # <- Saves best model weights
+
                 
             # Store metrics for plotting
             if phase == 'train':
@@ -117,6 +137,24 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
     plt.legend()
 
     plt.tight_layout()
+    plt.savefig(f"plots/{model_name}_training.png", dpi=300, bbox_inches='tight')
     plt.show()
 
     return model
+
+
+if __name__ == '__main__':
+    # Example usage
+    # Assuming you have a model, dataloaders, criterion, optimizer defined
+    # model = YourModel()
+    # dataloaders = {'train': train_loader, 'val': val_loader}
+    # criterion = nn.CrossEntropyLoss()
+    # optimizer = optim.Adam(model.parameters(), lr=0.001)
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+
+    trained_model = train_model(model, dataloaders, criterion, optimizer, device=device, num_epochs=10)
+    
+    # After training, evaluate the model on the validation set and plot confusion matrix
+    plot_confusion_matrix(trained_model, dataloaders['val'], device)
