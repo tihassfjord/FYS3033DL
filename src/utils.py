@@ -1,13 +1,30 @@
 # utils.py
-#       It includes a custom Dataset class, a stratified split function, etc.
+#       It includes a custom Dataset class, a function to set the random seed for reproducibility, and a function to compute entropy.
 
 import torch
 import numpy as np
-from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
-import matplotlib.pyplot as plt
-from typing import Tuple, List
+import random 
+
+
+def set_seed(seed=42):
+    '''
+    To have reproducible results EVERY time the code is ran, we set the seed for ALL random number generators.
+    This includes numpy, random, and torch.
+    '''
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 
 class ImageDataset(Dataset):
+    '''
+    A custom dataset class for loading the images and labels from our given dataset.
+    Assumes images are in a numpy array format and labels are in a separate numpy array.
+    '''
     def __init__(self, images: np.ndarray, labels: np.ndarray=None, transform=None):
         # images: (N, 96, 96, 3)
         # labels: (N, ) or None if unlabeled
@@ -19,9 +36,13 @@ class ImageDataset(Dataset):
         return len(self.images)
 
     def __getitem__(self, idx):
-        img = self.images[idx].astype(np.float32)
+        img = self.images[idx].astype(np.float32) # Convert to float32 
         # Example: scale images to [0,1], convert to CHW
-        img = img / 255.0
+        img = img / 255.0 # Normalize to [0, 1]
+    
+        if img.shape[-1] == 3:  # Assume HWC format
+            img = np.transpose(img, (2, 0, 1))  # (C, H, W)
+
         # img = np.transpose(img, (2, 0, 1))  # (3,96,96)
 
         if self.transform:
@@ -35,24 +56,7 @@ class ImageDataset(Dataset):
             # For unlabeled data
             return torch.tensor(img, dtype=torch.float)
 
-def split_dataset_stratified(images: np.ndarray, labels: np.ndarray,
-                            val_fraction: float=0.2) -> Tuple[List[int], List[int]]:
-    """
-    Splits indices into train/val sets with class stratification.
-    """
-    # Basic example of stratified split:
-    num_classes = len(np.unique(labels))
-    train_indices = []
-    val_indices = []
 
-    for c in range(num_classes):
-        c_indices = np.where(labels == c)[0]
-        np.random.shuffle(c_indices)
-        val_size = int(len(c_indices) * val_fraction)
-        val_indices.extend(c_indices[:val_size])
-        train_indices.extend(c_indices[val_size:])
-
-    return train_indices, val_indices
 
 def compute_entropy(probabilities: np.ndarray) -> float:
     """
@@ -62,15 +66,4 @@ def compute_entropy(probabilities: np.ndarray) -> float:
     p = np.clip(probabilities, eps, 1.0)
     return -np.sum(p * np.log(p))
 
-def plot_entropy_hist(entropies_known, entropies_unknown, bins=30):
-    """
-    Plots two histograms on the same figure.
-    """
-    plt.figure()
-    plt.hist(entropies_known, bins=bins, alpha=0.5, label='Known Class Entropy')
-    plt.hist(entropies_unknown, bins=bins, alpha=0.5, label='Unknown Class Entropy')
-    plt.xlabel('Entropy')
-    plt.ylabel('Frequency')
-    plt.title('Entropy Histograms for Known vs. Unknown')
-    plt.legend()
-    plt.show()
+

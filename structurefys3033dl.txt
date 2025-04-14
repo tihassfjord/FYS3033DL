@@ -1,0 +1,30 @@
+FYS3033DL/
+├── src/                       # 🔧 Core code
+│   ├── vgg11bn.py             # ✅ Custom VGG-11 (no pretrained)
+│   ├── train.py               # ✅ Training logic with logging, TQDM, model saving
+│   ├── utils.py               # ✅ Dataset + seed setup
+│   └── evaluation.py          # ✅ Confusion matrix, F1, entropy analysis
+├── notebook.ipynb             # 📓 Your main experimentation + documentation driver
+├── data/                      # 📁 Clean separation of datasets
+│   ├── problem2/
+│   └── problem3/
+├── doc/                       # 📄 Report sources (TeX + final PDF)
+├── models/                    # 💾 Checkpoints (best, final)
+├── plots/                     # 📊 Training & confusion matrix images
+├── logs/                      # 📈 CSV logs per model
+
+
+FYS3033DL/
+├── src/
+│   ├── vgg11bn.py         # VGG11 class
+│   ├── train.py         # Training loop with logging
+│   ├── utils.py         # Transforms, seed, etc.
+│   └── evaluation.py    # ← NEW: Evaluation & metrics
+├── notebook.ipynb       # Analysis, discussion, actually training the models etc
+├── data/                # Datasets
+	└── problem2/    
+	└── problem3/
+├── doc/                 # PDF + TeX report
+├── models/              # .pth files
+├── plots/               # .png training curves, confusion matrix
+├── logs/                #  CSVs with loss/acc per model

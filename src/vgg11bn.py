@@ -16,6 +16,8 @@ class VGG11BN(nn.Module):
         self.dropout = dropout
 
         # Convolutional part (features)
+        # The padding is 1 to keep the spatial dimensions the same after convolution.
+        # The stride is 1 by default.
         # Configuration: 64 -> MP -> 128 -> MP -> 256 x2 -> MP -> 512 x2 -> MP -> 512 x2 -> MP
         # After each conv, we insert a batchnorm.
         # Pool kernel size is 2, stride 2.
@@ -64,12 +66,11 @@ class VGG11BN(nn.Module):
             nn.Linear(512 * 3 * 3, 4096),
             nn.ReLU(True),
             # Dropout to be optionally inserted:
-            nn.Dropout(p=0.5) if self.dropout else nn.Identity(),
-
+            nn.Dropout(p=0.5) if self.dropout else nn.Identity(),  # nn.identity() is a "pass-through" layer if dropout is False.
             nn.Linear(4096, 4096),
             nn.ReLU(True),
             # Dropout to be optionally inserted:
-            nn.Dropout(p=0.5) if self.dropout else nn.Identity(),
+            nn.Dropout(p=0.5) if self.dropout else nn.Identity(),  
 
             nn.Linear(4096, self.num_classes)
         )
@@ -81,9 +82,9 @@ class VGG11BN(nn.Module):
         return x
 
 if __name__ == "__main__":
-    # Create a model instance for 3 classes (planes, ships, trucks) as required.
-    model_2a = VGG11BN(num_classes=3, dropout=True)
-    print(f'INFO : Model created with dropout=False, Total parameters: {sum(p.numel() for p in model_2a.parameters())}')
+    # Create a model instance for 3 classes with dropout
+    model = VGG11BN(num_classes=3, dropout=True)
+    print(f'INFO : Model created with dropout={model.dropout}, Total parameters: {sum(p.numel() for p in model.parameters())}')
 
     
 
