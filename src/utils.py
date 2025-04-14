@@ -6,6 +6,17 @@ import numpy as np
 import random 
 from torch.utils.data import Dataset
 
+def print_framed_metrics(val_loss, val_acc):
+    """
+    Prints validation loss and accuracy inside a pretty ASCII box.
+    """
+    msg = f"Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_acc:.4f}"
+    border = '+' + '-' * (len(msg) + 2) + '+'
+    print(border)
+    print(f"| {msg} |")
+    print(border)
+
+
 def set_seed(seed=42):
     '''
     To have reproducible results EVERY time the code is ran, we set the seed for ALL random number generators.

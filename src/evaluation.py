@@ -30,22 +30,54 @@ def plot_confusion_matrix(model, dataloader, device, class_names=None, save_path
     else:
         plt.show()
 
-def classification_summary(model, dataloader, device='cuda', class_names=None):
-    ''' 
-    Prints a classification report including precision, recall, and F1-score.
-    '''
+# def classification_summary(model, dataloader, device='cuda', class_names=None):
+#     ''' 
+#     Prints a classification report including precision, recall, and F1-score.
+#     '''
+#     model.eval()
+#     y_true, y_pred = [], []
+#     with torch.no_grad():
+#         for inputs, labels in dataloader:
+#             inputs, labels = inputs.to(device), labels.to(device)
+#             outputs = model(inputs)
+#             _, preds = torch.max(outputs, 1)
+#             y_true.extend(labels.cpu().numpy())
+#             y_pred.extend(preds.cpu().numpy())
+
+    
+#     print(classification_report(y_true, y_pred, target_names=class_names))
+#     return y_true, y_pred  # for custom plots
+
+def classification_summary(model, dataloader, criterion, device='cuda', class_names=None):
     model.eval()
     y_true, y_pred = [], []
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
     with torch.no_grad():
         for inputs, labels in dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
+            loss = criterion(outputs, labels)
             _, preds = torch.max(outputs, 1)
+
+            running_loss += loss.item() * inputs.size(0)
+            correct += torch.sum(preds == labels.data).item()
+            total += labels.size(0)
+
             y_true.extend(labels.cpu().numpy())
             y_pred.extend(preds.cpu().numpy())
-    
-    print(classification_report(y_true, y_pred, target_names=class_names))
-    return y_true, y_pred  # for custom plots
+
+    avg_loss = running_loss / total
+    accuracy = correct / total
+
+    if class_names:
+        print(classification_report(y_true, y_pred, target_names=class_names))
+    else:
+        print(classification_report(y_true, y_pred))
+    return avg_loss, accuracy, y_true, y_pred  # for custom plots
+
 
 def plot_entropy_hist(entropies_known, entropies_unknown, bins=30): 
     """
