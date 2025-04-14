@@ -5,13 +5,19 @@ from tqdm import tqdm
 import torch
 import time
 import os
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt 
+from datetime import datetime
+
 
 def ensure_dir(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
 def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device='cuda', num_epochs=10, model_name='model'):
+   
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    model_name = f"{model_name}_{timestamp}"
+
     start_time = time.time()
     best_acc = 0.0
     best_model_wts = None
