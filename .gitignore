@@ -1,12 +1,19 @@
+# Python + Jupyter stuff
 __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 __MACOSX/
+
+# LaTeX build files
 *.log
 *.aux
 *.out
 *.fdb_latexmk
 *.fls
 *.synctex.gz
-models/
-logs/
+
+# Keep folders but ignore contents
+models/*
+!models/.gitkeep
+
+
