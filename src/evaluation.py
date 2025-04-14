@@ -6,6 +6,63 @@ import torch
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report
 import matplotlib.pyplot as plt
 import numpy as np
+import os
+from sklearn.metrics import roc_curve, auc
+from sklearn.preprocessing import label_binarize
+
+
+def ensure_dir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+def plot_multiclass_roc(model, dataloader, device, num_classes=3, class_names=None, model_name="model"):
+    """
+    Plots and saves a multiclass ROC curve for classification models.
+    Assumes model outputs logits (before softmax).
+    """
+    model.eval()
+    y_true = []
+    y_score = []
+
+    with torch.no_grad():
+        for inputs, labels in dataloader:
+            inputs = inputs.to(device)
+            outputs = model(inputs).cpu().numpy()
+            y_score.extend(outputs)
+            y_true.extend(labels.numpy())
+
+    y_score = np.array(y_score)
+    y_true = np.array(y_true)
+
+    y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
+
+    fpr, tpr, roc_auc = {}, {}, {}
+    for i in range(num_classes):
+        fpr[i], tpr[i], _ = roc_curve(y_true_bin[:, i], y_score[:, i])
+        roc_auc[i] = auc(fpr[i], tpr[i])
+
+    plt.figure(figsize=(10, 6))
+    for i in range(num_classes):
+        label = class_names[i] if class_names else f'Class {i}'
+        plt.plot(fpr[i], tpr[i], label=f'{label} (AUC = {roc_auc[i]:.2f})')
+
+    plt.plot([0, 1], [0, 1], 'k--', lw=2)
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC Curve - Multi-Class')
+    plt.legend(loc='lower right')
+    plt.grid(True)
+    plt.tight_layout()
+
+    ensure_dir("plots")
+    save_path = f"plots/ROC_{model_name}.png"
+    plt.savefig(save_path)
+    plt.show()
+
+    print(f"[ROC] Saved ROC plot to: {save_path}")
+
 
 def plot_confusion_matrix(model, dataloader, device, class_names=None, save_path=None):
     ''' 
