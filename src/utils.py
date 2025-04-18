@@ -45,22 +45,33 @@ class ImageDataset(Dataset):
 
     def __len__(self):
         return len(self.images)
-    
     def __getitem__(self, idx):
-        img = self.images[idx].astype(np.float32) / 255.0  # Normalize
-
-        # Convert from (C, H, W) → (H, W, C) for torchvision
-        img = np.transpose(img, (1, 2, 0))
+        img = self.images[idx].astype(np.float32) / 255.0  # Already (H, W, C)
 
         if self.transform:
-            img = self.transform(img)  # e.g., ToPILImage → Flip → ToTensor()
+            img = self.transform(img)  # ToTensor will handle HWC → CHW
 
-        # Final shape is already CHW because ToTensor() does it
         if self.labels is not None:
             label = self.labels[idx]
             return img, torch.tensor(label, dtype=torch.long)
         else:
             return img
+
+    # def __getitem__(self, idx):
+    #     img = self.images[idx].astype(np.float32) / 255.0  # Normalize
+
+    #     # Convert from (C, H, W) → (H, W, C) for torchvision
+    #     img = np.transpose(img, (1, 2, 0))
+
+    #     if self.transform:
+    #         img = self.transform(img)  # e.g., ToPILImage → Flip → ToTensor()
+
+    #     # Final shape is already CHW because ToTensor() does it
+    #     if self.labels is not None:
+    #         label = self.labels[idx]
+    #         return img, torch.tensor(label, dtype=torch.long)
+    #     else:
+    #         return img
 
 
 

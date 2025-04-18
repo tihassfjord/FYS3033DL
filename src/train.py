@@ -88,9 +88,10 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
                     best_acc = epoch_acc
                     best_model_wts = model.state_dict()
                     best_epoch = epoch  # Reset patience counter
-                else:
+                # else:
                     # Print patience remaining if no improvement
-                    print(f"Patience remaining: {patience - (epoch - best_epoch)}")
+                    # tqdm.write(f"Patience remaining: {patience - (epoch - best_epoch)}")
+
 
             else:
                 train_losses.append(epoch_loss)
