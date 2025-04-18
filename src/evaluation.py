@@ -9,6 +9,7 @@ import numpy as np
 import os
 from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import label_binarize
+from sklearn.metrics import accuracy_score
 
 
 def ensure_dir(path):
@@ -62,6 +63,28 @@ def plot_multiclass_roc(model, dataloader, device, num_classes=3, class_names=No
     plt.show()
 
     print(f"[ROC] Saved ROC plot to: {save_path}")
+
+
+def plot_per_class_accuracy(y_true, y_pred, class_names, save_path=None):
+    """
+    Plots a bar chart of accuracy per class.
+    """
+    class_accs = []
+    for cls in range(len(class_names)):
+        mask = np.array(y_true) == cls
+        acc = accuracy_score(np.array(y_true)[mask], np.array(y_pred)[mask])
+        class_accs.append(acc)
+
+    plt.figure(figsize=(6, 4))
+    plt.bar(class_names, class_accs)
+    plt.ylim(0, 1)
+    plt.ylabel("Accuracy")
+    plt.title("Per-Class Accuracy")
+    plt.grid(True)
+    if save_path:
+        ensure_dir("plots")
+        plt.savefig(save_path)
+    plt.show()
 
 
 def plot_confusion_matrix(model, dataloader, device, class_names=None, save_path=None):
