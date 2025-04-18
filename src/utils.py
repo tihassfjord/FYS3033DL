@@ -45,27 +45,47 @@ class ImageDataset(Dataset):
 
     def __len__(self):
         return len(self.images)
-
-    def __getitem__(self, idx):
-        img = self.images[idx].astype(np.float32) # Convert to float32 
-        # Example: scale images to [0,1], convert to CHW
-        img = img / 255.0 # Normalize to [0, 1]
     
-        if img.shape[-1] == 3:  # Assume HWC format
-            img = np.transpose(img, (2, 0, 1))  # (C, H, W)
-
-        # img = np.transpose(img, (2, 0, 1))  # (3,96,96)
+    def __getitem__(self, idx):
+        img = self.images[idx].astype(np.float32) / 255.0  # Normalize to [0, 1]
+        label = self.labels[idx] if self.labels is not None else None
 
         if self.transform:
-            # Apply any custom transforms (e.g. augmentations)
+            # Keep image in HWC format for torchvision transforms
             img = self.transform(img)
+            # If transform returns a NumPy array (like with albumentations), convert to CHW
+            if isinstance(img, np.ndarray):
+                img = np.transpose(img, (2, 0, 1))
+        else:
+            # No transform? Manually convert to CHW
+            img = np.transpose(img, (2, 0, 1))
 
-        if self.labels is not None:
-            label = self.labels[idx]
+        if label is not None:
             return torch.tensor(img, dtype=torch.float), torch.tensor(label, dtype=torch.long)
         else:
-            # For unlabeled data
             return torch.tensor(img, dtype=torch.float)
+
+
+    # def __getitem__(self, idx):
+    #     img = self.images[idx].astype(np.float32) # Convert to float32 
+    #     # Example: scale images to [0,1], convert to CHW
+    #     img = img / 255.0 # Normalize to [0, 1]
+    
+    #     if img.shape[-1] == 3:  # Assume HWC format
+    #         img = np.transpose(img, (2, 0, 1))  # (C, H, W)
+
+    #     # img = np.transpose(img, (2, 0, 1))  # (3,96,96)
+
+    #     if self.transform:
+    #         # Apply any custom transforms (e.g. augmentations)
+    #         img = self.transform(img)
+        
+    #     if self.labels is not None:
+    #         label = self.labels[idx]
+    #         return torch.tensor(img, dtype=torch.float), torch.tensor(label, dtype=torch.long)
+    #     else:
+    #         # For unlabeled data
+    #         return torch.tensor(img, dtype=torch.float)
 
 
 
