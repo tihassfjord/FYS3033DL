@@ -3,7 +3,8 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 __MACOSX/
-
+shit/
+models2/
 # LaTeX build files
 *.log
 *.aux
@@ -15,5 +16,11 @@ __MACOSX/
 # Keep folders but ignore contents
 models/*
 !models/.gitkeep
+logs/*
+!logs/.gitkeep
+plots/*
+!plots/.gitkeep
+doc/*
+!doc/.gitkeep
 
 

@@ -36,6 +36,10 @@
 \usepackage[margin=0.8in]{geometry}
 \usepackage{multicol}
 
+
+
+
+
 % Listing style
 \definecolor{codegreen}{rgb}{0,0.6,0}
 \definecolor{codegray}{rgb}{0.5,0.5,0.5}
@@ -174,38 +178,26 @@ KL(p \parallel q)
 \noindent \textbf{Usage in VAEs:} \\
 In VAEs, the KL divergence between the approximate posterior \( q(z|x) \) and the prior \( p(z) \) is used as a regularization term in the Evidence Lower Bound (ELBO). When using discrete latent variables such as Bernoulli distributions, this exact KL expression allows us to compute the divergence in closed form and include it directly in the loss function, helping guide the encoder toward distributions close to the prior.
 This is crucial for ensuring that the latent space is well-structured and that the decoder can generate meaningful samples from the learned distribution.
-\subsection*{2a)}
-For this classification task involving RGB images of size $96 \times 96$, using a deep convolutional network like VGG-11 with Batch Normalization is a strong starting point. The original VGG-11 architecture was proposed in Simonyan and Zisserman (2015) and is known for its simplicity and effectiveness in image classification tasks.
 
-\medskip
+% Task 2: CNN Experiments with VGG‑11 and BatchNorm
+\section*{Task 2: CNN Experiments with VGG‑11 and BatchNorm}
 
-\noindent \textbf{Reasons for using VGG-11:}
+\subsection*{(2a) Architectural Choices}
+For our three‑class classification task on 96×96 RGB images (Plane, Ship, Truck), we adopt a VGG‑11 backbone with Batch Normalization after every convolution, trained from scratch (no pretrained weights). The key motivations are:
 \begin{itemize}
-  \item It uses small \(3 \times 3\) convolutional filters, which are efficient and effective for capturing local features like edges and textures.
-  \item The architecture is relatively shallow compared to modern networks, which makes it easier to train without needing massive computational resources.
-  \item It has been shown to perform well on similar image classification tasks, especially when the number of classes is limited.
+  \item \textbf{VGG‑11 simplicity and locality}: its stack of small $3\times3$ convolutions efficiently captures edge and texture information with limited parameters, suiting our moderate dataset size.
+  \item \textbf{Controlled depth}: at 11 layers, the network is deep enough to learn hierarchical features yet shallow enough to train without massive data or compute.
+  \item \textbf{Batch Normalization}: by normalizing layer inputs, BatchNorm reduces internal covariate shift, stabilizing and accelerating training, permitting larger learning rates, and providing implicit regularization.
 \end{itemize}
-
-\noindent \textbf{Why Batch Normalization?}
-\begin{itemize}
-  \item BatchNorm helps stabilize training by normalizing the inputs to each layer, reducing internal covariate shift.
-  \item It allows the use of higher learning rates, which can speed up convergence.
-  \item It also acts as a form of regularization and can reduce the need for Dropout early in training.
-\end{itemize}
-
-\noindent Since our dataset is relatively small in terms of resolution and the number of classes (planes, ships, and trucks), VGG-11 with BatchNorm provides a good tradeoff between capacity and simplicity. It allows us to build a solid baseline model that is easy to modify and extend in later steps (e.g., adding Dropout, uncertainty estimation, etc.).
-\subsection*{2b)}
-
+\subsection*{(2b)}
 Dropout is a regularization technique introduced to prevent overfitting in deep neural networks. It works by randomly "dropping out" (i.e., setting to zero) a fraction of the units in a layer during training. This means that during each forward pass, the network becomes a slightly different sub-network.
 
 \medskip
 
 \noindent \textbf{Mathematically:} For each unit \( h_i \) in a hidden layer, during training we sample a Bernoulli mask \( m_i \sim \text{Bern}(1 - p) \), and compute:
-
 \[
 \tilde{h}_i = m_i \cdot h_i
 \]
-
 where \( p \) is the dropout rate (e.g., 0.5). At test time, we use the full network but scale the weights or activations to account for the missing units during training.
 
 \medskip
@@ -218,44 +210,8 @@ where \( p \) is the dropout rate (e.g., 0.5). At test time, we use the full net
 \end{itemize}
 
 \noindent In our case, using Dropout is important since the dataset may not be large enough to justify using a large-capacity network without regularization. Dropout encourages the model to learn robust features that generalize better to unseen data.
-\subsection*{2c)}
 
-We modify the VGG-11 network to include Dropout layers after the two fully connected layers with 4096 units, as described in the assignment. The updated architecture includes the following in the classifier section:
-
-\begin{itemize}
-  \item Linear (512 × 3 × 3 → 4096), followed by ReLU and Dropout(0.5)
-  \item Linear (4096 → 4096), followed by ReLU and Dropout(0.5)
-  \item Linear (4096 → 3), corresponding to the three output classes
-\end{itemize}
-
-\noindent The Dropout layers randomly deactivate 50\% of the neurons during training, helping reduce overfitting and encouraging the network to learn more robust and redundant representations.
-
-\medskip
-
-\noindent \textbf{Discussion:} Including Dropout in the fully connected layers is particularly important in VGG-style networks, as these layers have a large number of parameters and are prone to overfitting — especially when the dataset is relatively small. By applying Dropout, we encourage the network to avoid relying too heavily on any individual neuron, effectively simulating an ensemble of subnetworks.\\
-\\
-Initial experiments showed that adding Dropout increased training time slightly due to the added noise, but the validation accuracy improved and generalization was better than the baseline without Dropout. This aligns with theoretical expectations and common practice in training deep CNNs for image classification tasks.\\
-\\
-Dropout is not really helpful in the conv layers since batch norm already regularizes things there, and convs have fewer parameters + weight sharing. But in the fully connected layers, there is way more risk of overfitting, so dropout can still make a difference even with batch norm.
-% Task 2: CNN Experiments with VGG‑11 and BatchNorm
-\section*{Task 2: CNN Experiments with VGG‑11 and BatchNorm}
-
-\subsection*{2a) Architectural Choices}
-For our three‑class classification task on 96×96 RGB images (Plane, Ship, Truck), we adopt a VGG‑11 backbone with Batch Normalization after every convolution, trained from scratch (no pretrained weights). The key motivations are:
-\begin{itemize}
-  \item \textbf{VGG‑11 simplicity and locality}: its stack of small $3\times3$ convolutions efficiently captures edge and texture information with limited parameters, suiting our moderate dataset size.
-  \item \textbf{Controlled depth}: at 11 layers, the network is deep enough to learn hierarchical features yet shallow enough to train without massive data or compute.
-  \item \textbf{Batch Normalization}: by normalizing layer inputs, BatchNorm reduces internal covariate shift, stabilizing and accelerating training, permitting larger learning rates, and providing implicit regularization.
-\end{itemize}
-
-\subsection*{2b) Dropout Regularization}
-Dropout randomly deactivates a fraction $p$ of neurons during each training pass, formally:
-\[
-  \tilde h_i = m_i \cdot h_i,\quad m_i\sim\mathrm{Bernoulli}(1-p)
-\]
-where $h_i$ is a hidden activation. This prevents units from co‑adapting, effectively training an ensemble of subnetworks, which improves generalization—especially critical in the large fully connected layers of VGG‑style classifiers.
-
-\subsection*{2c) Experimental Setup and Results}
+\subsection*{(2c) Experimental Setup and Results}
 We compare four configurations, all using batch size 32 and early stopping with patience 15:
 \begin{itemize}
   \item \textbf{SGD, no Dropout, no scheduler}\quad (LR=1e-2, weight decay=0)
@@ -329,7 +285,7 @@ We compare four configurations, all using batch size 32 and early stopping with 
 \end{figure}
 
 \subsection*{Discussion}
-I learned a lot by watching these curves and metrics unfold. Adam raced ahead early but then my validation loss crept up around epoch~30—without Dropout it clearly overfit. Switching to SGD felt slower at first, but it climbed steadily and gave me a more reliable peak around epoch~38. Introducing Dropout in the two big FC layers was a turning point: I saw both accuracy and F1 jump by about 2–3\%, and my loss curves smoothed out nicely. Finally, the StepLR scheduler (halving the LR every 15 epochs) helped me eke out the last bit of performance without tweaking learning rates by hand.\\
+I learned a lot by watching these curves and metrics unfold. Adam raced ahead early but then my validation loss crept up around epoch~30—without Dropout it clearly overfit. Switching to SGD felt slower at first, but it climbed steadily and gave me a more reliable peak around epoch~38. Introducing Dropout in the two big FC layers was a turning point: I saw both accuracy and F1 jump by about 2–3\%, and my loss curves smoothed out nicely. Finally, the StepLR scheduler (halving the LR every 15 epochs) helped me eke out the last bit of performance without tweaking learning rates by hand.
 \\
 Overall, this hands-on exploration taught me:
 \begin{itemize}
@@ -339,6 +295,141 @@ Overall, this hands-on exploration taught me:
 \end{itemize}
 Training from scratch on a limited dataset forced me to figure out how to balance speed, capacity, and regularization. In the end, I just had to build a model that felt ''ok'', and go with it to have some results to report on. I felt that the deeper I went down the rabbithole, the deeper it got, but with interesting insights.\\
 \\
-During experimentation, I also observed minor variations in performance when training the same model setup on different machines (local vs remote). While seed setting and deterministic flags were applied I learned that even with the same code and data, the underlying hardware can introduce variability in results, which is something to keep in mind for future experiments. This made things a bit confusing, but did not affect the overall conclusions that much. \\
+During experimentation, I also observed minor variations in performance when training the same model setup on different machines (local vs remote). While seed setting and deterministic flags were applied I learned that even with the same code and data, the underlying hardware can introduce variability in results, which is something to keep in mind for future experiments. This made things a bit confusing, but did not affect the overall conclusions that much.\\
+\\
+Including Dropout in the fully connected layers is particularly important in VGG-style networks, as these layers have a large number of parameters and are prone to overfitting — especially when the dataset is relatively small. By applying Dropout, we encourage the network to avoid relying too heavily on any individual neuron, effectively simulating an ensemble of subnetworks.\\
+\\
+Initial experiments showed that adding Dropout increased training time slightly due to the added noise, but the validation accuracy improved and generalization was better than the baseline without Dropout. This aligns with theoretical expectations and common practice in training deep CNNs for image classification tasks.\\
+\\
+Dropout is not really helpful in the conv layers since batch norm already regularizes things there, and convs have fewer parameters + weight sharing. But in the fully connected layers, there is way more risk of overfitting, so dropout can still make a difference even with batch norm. 
+\subsection*{Discussion}
+I learned a lot by watching these curves and metrics unfold during training. Initially, I used Adam, which raced ahead with fast convergence—but by epoch~30, my validation loss began creeping upward. Without Dropout, it clearly overfit. Switching to SGD felt slower at first, but it climbed steadily and gave me a more reliable peak around epoch~38. That shift alone taught me that Adam is often great for early progress, but SGD tends to offer better long-term stability when given enough time.\\
+\\
+Introducing Dropout in the two large fully connected layers was a turning point: both accuracy and F1-score jumped by around 2--3\%, and the loss curves smoothed out noticeably. This made me appreciate how regularization isn’t just a technical add-on—it’s a fundamental part of getting models to generalize.\\
+\\
+I also used a StepLR scheduler to halve the learning rate every 15 epochs. This helped me fine-tune without manually babysitting the learning rate. Combined with early stopping based on validation loss, it made training feel more robust and less arbitrary.
+
+\vspace{0.5em}
+\noindent From this hands-on exploration, I learned:
+\begin{itemize}
+  \item \textbf{Optimizer trade-offs}: Adam helped me move fast in the beginning, but SGD gave me a more stable end result—especially when paired with a scheduler.
+  \item \textbf{Dropout still matters}: Even with BatchNorm, Dropout made a real difference in the FC layers, where overfitting is a bigger risk due to the parameter count.
+  \item \textbf{Learning rate scheduling works}: I didn’t need to hand-tune the learning rate, because StepLR and early stopping handled that adaptively.
+\end{itemize}
+Training from scratch on a small dataset forced me to think more deeply about how to balance speed, capacity, and regularization. At some point I had to accept that the model wasn’t going to be perfect—I just had to make it “good enough” to draw useful conclusions. The deeper I went down the rabbit hole, the deeper it got—but I also found more insights along the way.\\
+\\
+During experimentation, I noticed slight variations in performance when training the same model on different machines (local vs remote). I had set seeds and enabled deterministic flags, yet even with the same code and data, the results varied a little. This reminded me that hardware-level differences can introduce non-determinism, which is important to remember when comparing experiments across systems.\\
+\\
+Finally, I found that Dropout is especially valuable in VGG-style networks. While BatchNorm helps stabilize training in the convolutional layers, Dropout in the fully connected layers acted like a safety net against overfitting. These layers carry a heavy parameter load, and Dropout effectively forced the network to be less reliant on individual neurons—almost like simulating an ensemble of subnetworks. Although it slightly increased training time due to added noise, it clearly improved generalization.\\
+\\
+In short: Dropout wasn’t magic, but it mattered.
+
+\subsubsection*{(2d) Uncertainty Estimation using Dropout}
+To identify images of an unwanted class (in this case, birds), I used Monte Carlo (MC) Dropout to estimate the model's uncertainty. The idea is that if the model has never seen examples from a certain class during training, it will likely be less confident when making predictions on those images.\\
+\\
+For each labeled image in the new dataset, I performed 10 forward passes through the network with dropout enabled, then computed the mean softmax output $\hat{y}$. Using this mean, I calculated the entropy as a measure of uncertainty:
+\[
+H(\hat{y}) = -\sum_{i=1}^{N_c} \hat{y}_i \log \hat{y}_i,
+\]
+where $N_c$ is the number of classes in the model. Higher entropy values indicate that the model was more uncertain about its prediction.\\
+\\
+To investigate this, I split the labeled dataset into two groups: known classes (plane, ship, and truck) and the unknown class (bird). I then plotted a histogram of the entropy values for both groups and marked the mean of each distribution.
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\textwidth]{../plots/entropy_distribution.png}
+  \caption{Entropy distributions for known classes and the unknown (bird) class.}
+  
+  \vspace{1em}
+  \begin{tabular}{lcc}
+      \toprule
+      \textbf{Class Group} & \textbf{Mean Entropy} & \textbf{Standard Deviation} \\
+      \midrule
+      Known (Plane/Ship/Truck) & 0.2656 & 0.2895 \\
+      Unknown (Bird)           & 0.3448 & 0.3084 \\
+      \bottomrule
+  \end{tabular}
+  \caption*{Summary statistics for entropy distributions.}
+\end{figure}
+
+\noindent What I observed was consistent with my expectations: the entropy for the unknown class was generally higher. Specifically, the mean entropy for the known classes was approximately 0.266, while for the unknown class it was about 0.345. This suggests that entropy is a useful signal for detecting out-of-distribution samples, although the distributions do overlap. In the next step, I will use this insight to filter out probable bird images from the unlabeled dataset.
+\subsubsection*{(2e) Filtering Unwanted Images Using Entropy Threshold}
+Based on the entropy values computed in (2d), I used the ROC curve and Youden's $J$ statistic to determine a suitable threshold for separating the known classes from the new unwanted class (birds). The best threshold found was:
+\[
+\text{Entropy threshold} = 0.0641
+\]
+To find this threshold, I computed the Receiver Operating Characteristic (ROC) curve using the entropies as scores, and assigned ground truth labels: 0 for known classes and 1 for the bird class. The ROC curve shows the trade-off between true positive rate (TPR) and false positive rate (FPR) at different thresholds. To select the best threshold, I used Youden’s $J$ statistic, defined as:
+\[
+J = \text{TPR} - \text{FPR}
+\]
+This gives the point on the ROC curve that maximizes the difference between correctly detecting birds and mistakenly removing known samples. In other words, it tries to balance sensitivity and specificity, choosing the threshold that provides the most separation between the two groups.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{../plots/roc_curve_entropy.png}
+    \caption{ROC curve using entropy as score. The red dot indicates the threshold chosen by Youden’s $J$ statistic.}
+\end{figure}
+\noindent I applied the selected threshold to all labeled evaluation samples. If an image’s entropy exceeded the threshold, it was considered “uncertain” and removed. The results are summarized below:
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Class} & \textbf{Removed / Total} & \textbf{Percentage} \\
+\midrule
+Unwanted class (Birds) & 302 / 413 & 73.12\% \\
+Desired classes (Plane/Ship/Truck) & 711 / 1187 & 59.90\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{../plots/entropy_distribution_with_threshold.png}
+    \caption{Histogram of entropy values for known and unknown classes. The red vertical line marks the selected threshold.}
+\end{figure}
+These figures show that the entropy-based filter successfully removed a large portion of the unwanted class, but at the cost of also removing many images from the known classes. In this case, the threshold trades off recall on birds against precision on known classes. A lower threshold detects more birds but also increases the number of false positives.\\
+\\
+Overall, the method shows promise but requires careful tuning to balance the trade-off between removing unwanted classes and retaining known classes. The ROC curve and Youden's $J$ statistic provided a systematic way to select a threshold, but further experimentation with different thresholds would perhaps give better results.\\
+\\
+\textbf{Alternative Threshold (Midpoint of Means)}\\
+As a simpler alternative, I also tested using a threshold equal to the midpoint between the mean entropies of the known and unknown classes:
+\[
+\text{Threshold}_{\text{mean}} = \frac{\text{Mean}_{\text{known}} + \text{Mean}_{\text{unknown}}}{2} = 0.2936
+\]
+Using this threshold, I detected 192 out of 413 bird images (46.49\%) and mistakenly removed 365 out of 1187 known samples (30.75\%).
+\begin{center}
+  \begin{tabular}{lcc}
+  \toprule
+  \textbf{Class} & \textbf{Removed / Total} & \textbf{Percentage} \\
+  \midrule
+  Unwanted class (Birds) & 192 / 413 & 46.49\% \\
+  Desired classes (Plane/Ship/Truck) & 365 / 1187 & 30.75\% \\
+  \bottomrule
+  \end{tabular}
+\end{center}  
+Compared to the Youden's $J$ threshold, this midpoint threshold removes fewer known-class samples, but also detects significantly fewer birds. This method may be useful in settings where retaining known-class data is more critical, and some missed detections of unknowns are acceptable.\\
+\\
+This comparison highlights the trade-off between high recall (detecting more birds) and high precision (preserving more known-class samples). The choice of threshold depends on the priorities of the application.
+\subsubsection*{(2f) Final Prediction on Unlabeled Dataset}
+To finalize the filtering pipeline, I passed the 1600 unlabeled images through the trained VGG11BN model with Monte Carlo Dropout enabled. For each image, I computed the entropy of the mean softmax output from 10 stochastic forward passes and classified it as:
+\begin{itemize}
+  \item \textbf{1 (unknown class)} if entropy $\geq$ threshold
+  \item \textbf{0 (known class)} otherwise
+\end{itemize}
+I tested two different thresholds based on the previous analysis:
+\begin{itemize}
+  \item \textbf{Youden's J threshold} ($0.0653$): optimized for recall
+  \item \textbf{Midpoint between means} ($0.2936$): more conservative
+\end{itemize}
+The resulting binary prediction vectors were saved using \texttt{numpy.savez} and submitted as part of the exam. The summary of predictions is shown below:
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Threshold Strategy} & \textbf{\# Unknowns (1)} & \textbf{\# Known (0)} \\
+\midrule
+Youden's J (0.0653) & 439 & 1161 \\
+Midpoint (0.3052) & 256 & 1344 \\
+\bottomrule
+\end{tabular}
+\end{center}
+This comparison shows how a lower threshold captures more of the unknown class at the cost of removing more known samples, while a higher threshold does the opposite. Depending on the application’s priorities (e.g., minimizing false negatives vs. preserving data), either could be justified.
+
+
 
 \end{document}

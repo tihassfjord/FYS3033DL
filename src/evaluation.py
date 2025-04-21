@@ -159,17 +159,27 @@ def classification_summary(model, dataloader, criterion, device='cuda', class_na
     return avg_loss, accuracy, y_true, y_pred  # for custom plots
 
 
-def plot_entropy_hist(entropies_known, entropies_unknown, bins=30): 
-    """
-    Plots two histograms on the same figure.
-    """
-    plt.figure()
-    plt.hist(entropies_known, bins=bins, alpha=0.5, label='Known Class Entropy')
-    plt.hist(entropies_unknown, bins=bins, alpha=0.5, label='Unknown Class Entropy')
+
+
+def plot_entropy_hist(entropies_known, entropies_unknown):
+    import seaborn as sns
+    plt.figure(figsize=(8, 5))
+    
+    sns.histplot(entropies_known, bins=50, kde=True, label='Known Classes', color='blue', stat='density')
+    sns.histplot(entropies_unknown, bins=50, kde=True, label='Unknown Class', color='red', stat='density')
+    
+    mean_known = np.mean(entropies_known)
+    mean_unknown = np.mean(entropies_unknown)
+
+    plt.axvline(mean_known, color='blue', linestyle='--', label=f'Mean Known: {mean_known:.3f}')
+    plt.axvline(mean_unknown, color='red', linestyle='--', label=f'Mean Unknown: {mean_unknown:.3f}')
+
     plt.xlabel('Entropy')
-    plt.ylabel('Frequency')
-    plt.title('Entropy Histograms for Known vs. Unknown')
+    plt.ylabel('Density')
+    plt.title('Entropy Distribution: Known vs Unknown Classes')
     plt.legend()
+    plt.tight_layout()
+    plt.savefig('entropy_distribution.png')
     plt.show()
 
 if __name__ == "__main__":
