@@ -7,7 +7,9 @@ import time
 import os
 import matplotlib.pyplot as plt 
 from datetime import datetime
-
+from torch.cuda.amp import autocast
+from torch.cuda.amp import GradScaler
+from torch.optim.lr_scheduler import ReduceLROnPlateau   
 
 def ensure_dir(path):
     if not os.path.exists(path):
@@ -19,10 +21,11 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
     Trains the model using provided dataloaders and configuration.
     Includes early stopping based on validation accuracy.
     """
+    if isinstance(device, str):
+        device = torch.device(device)
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     model_name = f"{model_name}_{timestamp}"
-
     start_time = time.time()
     best_acc = 0.0
     best_model_wts = None
@@ -36,6 +39,10 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
 
     total_steps = num_epochs * sum(len(loader) for loader in dataloaders.values())
     global_loop = tqdm(total=total_steps, desc=f"Training {model_name}", unit='batch')
+    
+    use_amp      = device.type == "cuda"
+    scaler       = GradScaler() if use_amp else None
+    accum_steps  = 2          # set 1 to disable accumulation
 
     for epoch in range(num_epochs):
         
@@ -50,21 +57,41 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
             running_corrects = 0
             total_samples = 0
 
-            for inputs, labels in dataloaders[phase]:
+            # for inputs, labels in dataloaders[phase]:
+            for step, (inputs, labels) in enumerate(dataloaders[phase],1):
                 inputs, labels = inputs.to(device), labels.to(device)
-                optimizer.zero_grad()
+                
 
-                with torch.set_grad_enabled(phase == 'train'):
+                # with torch.set_grad_enabled(phase == 'train'):
+                #     outputs = model(inputs)
+                #     loss = criterion(outputs, labels)
+                with torch.set_grad_enabled(phase == 'train'), autocast(enabled=use_amp):
                     outputs = model(inputs)
-                    loss = criterion(outputs, labels)
+                    loss = criterion(outputs, labels) / accum_steps
+
                     _, preds = torch.max(outputs, 1)
 
+                    # if phase == 'train':
+                    #     loss.backward()
+                    #     optimizer.step()
                     if phase == 'train':
-                        loss.backward()
-                        optimizer.step()
-                        if scheduler and not isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                            scheduler.step()
-                            
+                        if scaler is not None:
+                            scaler.scale(loss).backward()
+                            # Update weights only after accumulating gradients
+                            if (step) % accum_steps == 0 or step == len(dataloaders['train']):
+                                scaler.step(optimizer)
+                                scaler.update()
+                                optimizer.zero_grad(set_to_none=True)
+                                if scheduler and not isinstance(scheduler, ReduceLROnPlateau):
+                                    scheduler.step()
+                        else:
+                            loss.backward()
+                            if (step) % accum_steps == 0 or step == len(dataloaders['train']):
+                                optimizer.step()
+                                optimizer.zero_grad(set_to_none=True)
+                                if scheduler and not isinstance(scheduler, ReduceLROnPlateau):
+                                    scheduler.step()
+
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data)
                 total_samples += inputs.size(0)
@@ -98,12 +125,16 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
             else:
                 train_losses.append(epoch_loss)
 
-        if scheduler is not None:
-            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                # Use the monitored metric based on the scheduler mode
-                metric = epoch_loss if scheduler.mode == 'min' else epoch_acc
-                scheduler.step(metric)
-            
+        if scheduler and isinstance(scheduler, ReduceLROnPlateau):
+            scheduler.step(epoch_loss if scheduler.mode=="min" else epoch_acc)
+
+        # if scheduler is not None:
+        #     if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+        #         # Use the monitored metric based on the scheduler mode
+        #         metric = epoch_loss if scheduler.mode == 'min' else epoch_acc
+        #         scheduler.step(metric)
+        #     elif isinstance(scheduler, torch.optim.lr_scheduler.StepLR):
+        #         scheduler.step()
 
 
 
