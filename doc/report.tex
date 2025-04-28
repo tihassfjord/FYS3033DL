@@ -70,10 +70,12 @@
 
 
 \title{Home Exam - FYS-3033 Deep Learning}
+\author{\large \textsc{Kandidatnummer: 4}\\[2mm]\normalsize UiT - Norges Arktiske Universitet\\[2mm]\small}
+\date{}
 
 \maketitle
 
-\section*{1}
+\section*{Problem 1}
 
 \subsection*{1a)}
 
@@ -178,17 +180,45 @@ KL(p \parallel q)
 \noindent \textbf{Usage in VAEs:} \\
 In VAEs, the KL divergence between the approximate posterior \( q(z|x) \) and the prior \( p(z) \) is used as a regularization term in the Evidence Lower Bound (ELBO). When using discrete latent variables such as Bernoulli distributions, this exact KL expression allows us to compute the divergence in closed form and include it directly in the loss function, helping guide the encoder toward distributions close to the prior.
 This is crucial for ensuring that the latent space is well-structured and that the decoder can generate meaningful samples from the learned distribution.
+\section*{Task 2 — Training a VGG-11BN Classifier (my learning journal)}
 
-% Task 2: CNN Experiments with VGG‑11 and BatchNorm
-\section*{Task 2: CNN Experiments with VGG‑11 and BatchNorm}
+\noindent\emph{Quick orientation.}  
+This task was all about building a VGG-11 network with BatchNorm from scratch (no fancy ImageNet weights) and squeezing as much performance as I could out of a pretty small three-class data set.  
+Below is the story of what I tried, what worked, what flopped, and where I’m still scratching my head.
 
-\subsection*{(2a) Architectural Choices}
-For our three‑class classification task on 96×96 RGB images (Plane, Ship, Truck), we adopt a VGG‑11 backbone with Batch Normalization after every convolution, trained from scratch (no pretrained weights). The key motivations are:
+%--------------------------------------------------------------------
+\subsection*{2a) Data Preparation}
+
 \begin{itemize}
-  \item \textbf{VGG‑11 simplicity and locality}: its stack of small $3\times3$ convolutions efficiently captures edge and texture information with limited parameters, suiting our moderate dataset size.
-  \item \textbf{Controlled depth}: at 11 layers, the network is deep enough to learn hierarchical features yet shallow enough to train without massive data or compute.
-  \item \textbf{Batch Normalization}: by normalizing layer inputs, BatchNorm reduces internal covariate shift, stabilizing and accelerating training, permitting larger learning rates, and providing implicit regularization.
+  \item \textbf{Merge \& re-split.} I first glued together the teacher-supplied \textbf{train} and \textbf{val} NPZ files, then did my own 80/20 stratified split so that I could shuffle things differently for every experiment.
+  \item \textbf{Augmentations (all \texttt{torchvision.transforms.v2}).}
+    \begin{itemize}
+      \item \texttt{RandomResizedCrop(96, scale=(0.8,1.0))}  
+      \item \texttt{RandomHorizontalFlip} and \texttt{RandomRotation}(\,$\pm$10$^{\circ}$)  
+      \item \texttt{ColorJitter}(0.2,0.2,0.2)  
+      \item \texttt{ToImage()} $\rightarrow$ scale to $[0,1]$ $\rightarrow$ \texttt{Normalize(mean,std)}
+    \end{itemize}
+  \item \textbf{Mean/Std.} I computed per-channel $\mu$ and $\sigma$ on the fly (saved to disk so I didn’t keep re-scanning images).
+  \item \textbf{DataLoader trick.} With the default settings I was only getting \,$\sim$5 batches/s.  
+        Turning on \texttt{persistent\_workers=True} and cranking \texttt{num\_workers} to CPU\,$-1$ jumped that to \,$\sim$31 batches/s (batch 16). Big quality-of-life win.
 \end{itemize}
+
+%--------------------------------------------------------------------
+\subsubsection*{2a) Model Setup \& First Round of Experiments}
+
+I hand-coded \texttt{VGG11BN} (conv–conv–pool $\times\,$5, then three FC layers).  
+Four combos went into the arena (batch 32, early-stop patience 15):
+
+\begin{enumerate}
+  \item SGD, LR $=10^{-2}$, \emph{no} Dropout, no scheduler, but Nesterov(0.9)!
+  \item Adam, LR $=10^{-4}$, no Dropout  
+  \item SGD + Dropout($0.5$) + StepLR($15,0.5$) and of course Nesterov(0.9)  
+  \item Adam + Dropout($0.5$) + StepLR($15,0.5$)  
+\end{enumerate}
+
+\paragraph{Surprise result.}  
+The clean-cut combo \textbf{SGD + Nesterov(0.9) + BatchNorm + weight-decay $5\!\times\!10^{-4}$} (no Dropout, LR $1\!\times\!10^{-3}$) was the clear winner, early-stopping at epoch 30.  
+I honestly expected Dropout to help, but BatchNorm + momentum already kept things tame.
 \subsection*{(2b)}
 Dropout is a regularization technique introduced to prevent overfitting in deep neural networks. It works by randomly "dropping out" (i.e., setting to zero) a fraction of the units in a layer during training. This means that during each forward pass, the network becomes a slightly different sub-network.
 
@@ -206,103 +236,53 @@ where \( p \) is the dropout rate (e.g., 0.5). At test time, we use the full net
 \begin{itemize}
   \item Dropout prevents neurons from co-adapting too strongly to each other.
   \item It acts like an ensemble of many subnetworks, improving generalization.
-  \item It’s particularly useful in fully connected layers, which are prone to overfitting when the dataset is small.
+  \item It is particularly useful in fully connected layers, which are prone to overfitting when the dataset is small.
 \end{itemize}
 
 \noindent In our case, using Dropout is important since the dataset may not be large enough to justify using a large-capacity network without regularization. Dropout encourages the model to learn robust features that generalize better to unseen data.
 
-\subsection*{(2c) Experimental Setup and Results}
-We compare four configurations, all using batch size 32 and early stopping with patience 15:
-\begin{itemize}
-  \item \textbf{SGD, no Dropout, no scheduler}\quad (LR=1e-2, weight decay=0)
-  \item \textbf{Adam, no Dropout, no scheduler}\quad (LR=1e-4, weight decay=0)
-  \item \textbf{SGD + Dropout + StepLR}\quad (LR=1e-2, weight decay=1e-4, Dropout $p=0.5$, StepLR(step=15,γ=0.5))
-  \item \textbf{Adam + Dropout + StepLR}\quad (LR=1e-4, weight decay=1e-4, Dropout $p=0.5$, StepLR(step=15,γ=0.5))
-\end{itemize}
+%--------------------------------------------------------------------
+\subsection*{2c) A Second Pass — Adding Dropout \& ReduceLROnPlateau}
+
+Later I fixed a small LR-scheduler typo and gave Dropout another shot, this time with \texttt{ReduceLROnPlateau}.  
+That nudged the numbers up a notch:
 
 \begin{table}[H]
   \centering
-  \begin{tabular}{lcc}
+  \caption{Validation report for my best “2c” run (SGD + Dropout + ReduceLROnPlateau)}
+  \begin{tabular}{lrrrr}
     \toprule
-    \textbf{Configuration} & \textbf{Val Acc} & \textbf{Macro F1} \\
+    Class & Precision & Recall & F1 & Support \\
     \midrule
-    SGD, no Dropout        & 0.88 & 0.88 \\
-    Adam, no Dropout       & 0.85 & 0.85 \\
-    SGD + Dropout + Scheduler  & 0.90 & 0.90 \\
-    Adam + Dropout + Scheduler & \textbf{0.9033} & 0.90 \\
+    Plane & 0.9492 & 0.9382 & 0.9437 & 259 \\
+    Ship  & 0.9336 & 0.9598 & 0.9465 & 249 \\
+    Truck & 0.9478 & 0.9338 & 0.9407 & 272 \\
+    \midrule
+    \multicolumn{4}{l}{\it overall accuracy = 0.9436 on 780 samples} &\\
     \bottomrule
   \end{tabular}
-  \caption{Validation accuracy and macro F1 for Task~2 experiments.}
 \end{table}
 
-% Training and Validation Curves for Task 2a
+\noindent\textbf{Checkpoint.} Val-loss $=0.1869$, accuracy $=94.36\%$.  
+The LR dropped twice (around epochs 24 \& 38) and each time the curve flattened nicely.
+
 \begin{figure}[H]
   \centering
-  \begin{subfigure}[b]{0.48\textwidth}
-    \includegraphics[width=\textwidth]{plots/2a_SGD_no_dropout_no_sched_bs32_20250418_180355_training.png}
-    \caption{SGD, no Dropout}
+  \begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{../task2plots/2c_best2204.png}
+    \caption{Loss/accuracy/LR}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{../task2plots/2c_confusionmatrix.png}
+    \caption{Confusion matrix}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{../task2plots/2cprecision_perclass.png}
+    \caption{Per-class acc.}
   \end{subfigure}
-  \begin{subfigure}[b]{0.48\textwidth}
-    \includegraphics[width=\textwidth]{plots/2a_Adam_no_dropout_no_sched_bs32_20250418_180612_training.png}
-    \caption{Adam, no Dropout}
-  \end{subfigure}
-  \caption{Training and validation accuracy curves for Task~2a experiments.}
+  \caption{Diagnostics for the best 2c model.}
 \end{figure}
-
-% Confusion Matrices for Task 2a
-\begin{figure}[H]
-  \centering
-  \begin{subfigure}[b]{0.48\textwidth}
-    \includegraphics[width=\textwidth]{plots/2a_SGD_no_dropout_no_sched_bs32_confusion_matrix.png}
-    \caption{SGD, no Dropout}
-  \end{subfigure}
-  \begin{subfigure}[b]{0.48\textwidth}
-    \includegraphics[width=\textwidth]{plots/2a_Adam_no_dropout_no_sched_bs32_confusion_matrix.png}
-    \caption{Adam, no Dropout}
-  \end{subfigure}
-  \caption{Confusion matrices on validation set for Task~2a.}
-\end{figure}
-
-% Training and Validation Curves for Task 2c
-\begin{figure}[H]
-  \centering
-  \begin{subfigure}[b]{0.48\textwidth}
-    \includegraphics[width=\textwidth]{plots/2c_SGD_dropout_sched_bs32_20250418_180811_training.png}
-    \caption{SGD + Dropout + Scheduler}
-  \end{subfigure}
-  \begin{subfigure}[b]{0.48\textwidth}
-    \includegraphics[width=\textwidth]{plots/2c_Adam_dropout_sched_bs32_20250418_181216_training.png}
-    \caption{Adam + Dropout + Scheduler}
-  \end{subfigure}
-  \caption{Training and validation accuracy curves for Task~2c experiments.}
-\end{figure}
-
-% Confusion Matrix for Best Task 2c Model
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=0.6\textwidth]{plots/2c_Adam_dropout_sched_bs32_confusion_matrix.png}
-  \caption{Confusion matrix for Task~2c: Adam + Dropout + Scheduler on the validation set.}
-\end{figure}
-
-\subsection*{Discussion}
-I learned a lot by watching these curves and metrics unfold. Adam raced ahead early but then my validation loss crept up around epoch~30—without Dropout it clearly overfit. Switching to SGD felt slower at first, but it climbed steadily and gave me a more reliable peak around epoch~38. Introducing Dropout in the two big FC layers was a turning point: I saw both accuracy and F1 jump by about 2–3\%, and my loss curves smoothed out nicely. Finally, the StepLR scheduler (halving the LR every 15 epochs) helped me eke out the last bit of performance without tweaking learning rates by hand.
-\\
-Overall, this hands-on exploration taught me:
-\begin{itemize}
-  \item \textbf{Optimizer trade-offs}: I saw that Adam is great for quick gains, but SGD can be more stable long-term when patience is allowed.
-  \item \textbf{Value of Dropout}: even with BatchNorm in place, the large FC layers benefited enormously from random unit deactivation, which felt like a safety net against overconfidence.
-  \item \textbf{Scheduling and early stopping}: automating learning rate decay and using patience-based early stops saved me from endless manual tuning.
-\end{itemize}
-Training from scratch on a limited dataset forced me to figure out how to balance speed, capacity, and regularization. In the end, I just had to build a model that felt ''ok'', and go with it to have some results to report on. I felt that the deeper I went down the rabbithole, the deeper it got, but with interesting insights.\\
-\\
-During experimentation, I also observed minor variations in performance when training the same model setup on different machines (local vs remote). While seed setting and deterministic flags were applied I learned that even with the same code and data, the underlying hardware can introduce variability in results, which is something to keep in mind for future experiments. This made things a bit confusing, but did not affect the overall conclusions that much.\\
-\\
-Including Dropout in the fully connected layers is particularly important in VGG-style networks, as these layers have a large number of parameters and are prone to overfitting — especially when the dataset is relatively small. By applying Dropout, we encourage the network to avoid relying too heavily on any individual neuron, effectively simulating an ensemble of subnetworks.\\
-\\
-Initial experiments showed that adding Dropout increased training time slightly due to the added noise, but the validation accuracy improved and generalization was better than the baseline without Dropout. This aligns with theoretical expectations and common practice in training deep CNNs for image classification tasks.\\
-\\
-Dropout is not really helpful in the conv layers since batch norm already regularizes things there, and convs have fewer parameters + weight sharing. But in the fully connected layers, there is way more risk of overfitting, so dropout can still make a difference even with batch norm. 
-\subsection*{Discussion}
+\subsubsection*{Discussion}
 I learned a lot by watching these curves and metrics unfold during training. Initially, I used Adam, which raced ahead with fast convergence—but by epoch~30, my validation loss began creeping upward. Without Dropout, it clearly overfit. Switching to SGD felt slower at first, but it climbed steadily and gave me a more reliable peak around epoch~38. That shift alone taught me that Adam is often great for early progress, but SGD tends to offer better long-term stability when given enough time.\\
 \\
 Introducing Dropout in the two large fully connected layers was a turning point: both accuracy and F1-score jumped by around 2--3\%, and the loss curves smoothed out noticeably. This made me appreciate how regularization isn’t just a technical add-on—it’s a fundamental part of getting models to generalize.\\
@@ -316,120 +296,411 @@ I also used a StepLR scheduler to halve the learning rate every 15 epochs. This 
   \item \textbf{Dropout still matters}: Even with BatchNorm, Dropout made a real difference in the FC layers, where overfitting is a bigger risk due to the parameter count.
   \item \textbf{Learning rate scheduling works}: I didn’t need to hand-tune the learning rate, because StepLR and early stopping handled that adaptively.
 \end{itemize}
-Training from scratch on a small dataset forced me to think more deeply about how to balance speed, capacity, and regularization. At some point I had to accept that the model wasn’t going to be perfect—I just had to make it “good enough” to draw useful conclusions. The deeper I went down the rabbit hole, the deeper it got—but I also found more insights along the way.\\
+Training from scratch on a small dataset forced me to think more deeply about how to balance speed, capacity, and regularization. At some point I had to accept that the model was not going to be perfect. I just had to make it "good enough" to draw useful conclusions. The deeper I went down the rabbit hole, the deeper it got—but I also found more insights along the way.\\
 \\
 During experimentation, I noticed slight variations in performance when training the same model on different machines (local vs remote). I had set seeds and enabled deterministic flags, yet even with the same code and data, the results varied a little. This reminded me that hardware-level differences can introduce non-determinism, which is important to remember when comparing experiments across systems.\\
 \\
 Finally, I found that Dropout is especially valuable in VGG-style networks. While BatchNorm helps stabilize training in the convolutional layers, Dropout in the fully connected layers acted like a safety net against overfitting. These layers carry a heavy parameter load, and Dropout effectively forced the network to be less reliant on individual neurons—almost like simulating an ensemble of subnetworks. Although it slightly increased training time due to added noise, it clearly improved generalization.\\
 \\
-In short: Dropout wasn’t magic, but it mattered.
+In short: Dropout was not magic, but it mattered.
+%--------------------------------------------------------------------
+%------------------------------------------------------------
+\subsection*{(2d) Using MC Dropout to measure uncertainty}
 
-\subsubsection*{(2d) Uncertainty Estimation using Dropout}
-To identify images of an unwanted class (in this case, birds), I used Monte Carlo (MC) Dropout to estimate the model's uncertainty. The idea is that if the model has never seen examples from a certain class during training, it will likely be less confident when making predictions on those images.\\
-\\
-For each labeled image in the new dataset, I performed 10 forward passes through the network with dropout enabled, then computed the mean softmax output $\hat{y}$. Using this mean, I calculated the entropy as a measure of uncertainty:
-\[
-H(\hat{y}) = -\sum_{i=1}^{N_c} \hat{y}_i \log \hat{y}_i,
-\]
-where $N_c$ is the number of classes in the model. Higher entropy values indicate that the model was more uncertain about its prediction.\\
-\\
-To investigate this, I split the labeled dataset into two groups: known classes (plane, ship, and truck) and the unknown class (bird). I then plotted a histogram of the entropy values for both groups and marked the mean of each distribution.
+To flag images of the \emph{unwanted} bird class I relied on Monte-Carlo (MC) Dropout.  
+Because the network never saw birds during training, it ought to be less sure of itself when one turns up.
+
+\paragraph{Recipe.}
+\begin{enumerate}
+  \item Put the model in \texttt{eval()} to freeze BatchNorm statistics.
+  \item Reactivate only the Dropout layers with a helper \texttt{enable\_dropout()}.
+  \item For every labelled image in \texttt{new\_evaluation\_data\_with\_labels.npz} do $T=10$ forward passes, average the softmax outputs $\hat y$, then compute
+  \[
+      H(\hat y)\;=\;-\sum_{i=1}^{3}\hat y_i\log\hat y_i.
+  \]
+\end{enumerate}
+\paragraph{Why entropy is a proxy for uncertainty.}\mbox{}\\  
+Sharp softmax like $[0.99,0.01,0.00]$ $\rightarrow$ tiny entropy (the net is confident);  
+flat softmax like $[0.34,0.33,0.33]$ $\rightarrow$ high entropy (the net is shrugging).
+\noindent
+\paragraph{What came out.}\mbox{}\\ 
+I split the images into "known" (plane/ship/truck) and "unknown" (bird) and plotted their entropies:
+
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.85\textwidth]{../plots/entropy_distribution.png}
-  \caption{Entropy distributions for known classes and the unknown (bird) class.}
-  
-  \vspace{1em}
-  \begin{tabular}{lcc}
-      \toprule
-      \textbf{Class Group} & \textbf{Mean Entropy} & \textbf{Standard Deviation} \\
-      \midrule
-      Known (Plane/Ship/Truck) & 0.2656 & 0.2895 \\
-      Unknown (Bird)           & 0.3448 & 0.3084 \\
-      \bottomrule
-  \end{tabular}
-  \caption*{Summary statistics for entropy distributions.}
+  \includegraphics[width=0.85\linewidth]{../task2plots/entropy_distribution.png}
+  \caption{Entropy histograms for known classes (blue) and birds (orange); the dashed lines mark the means.}
 \end{figure}
 
-\noindent What I observed was consistent with my expectations: the entropy for the unknown class was generally higher. Specifically, the mean entropy for the known classes was approximately 0.266, while for the unknown class it was about 0.345. This suggests that entropy is a useful signal for detecting out-of-distribution samples, although the distributions do overlap. In the next step, I will use this insight to filter out probable bird images from the unlabeled dataset.
-\subsubsection*{(2e) Filtering Unwanted Images Using Entropy Threshold}
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Group} & \textbf{Mean $H$} & \textbf{Std.\ Dev.} \\
+\midrule
+Known (Plane/Ship/Truck) & 0.3280 & 0.3142 \\
+Unknown (Bird)           & 0.5220 & 0.2824 \\
+\bottomrule
+\end{tabular}
+\end{center}
+The bird distribution is clearly shifted to the right—about $0.19$ higher on average—so entropy does give us a usable "unsure" signal.
+
+%------------------------------------------------------------
+\subsection*{(2e) Picking a threshold}
+
+Two thresholds looked interesting:
+
+\begin{itemize}
+  \item \textbf{Mid-point of the means:} $(0.3280 + 0.5220)/2 = 0.4250$
+  \item \textbf{ROC/Youden $J$:} best cut-off found by maximising $(\text{TPR}-\text{FPR})$  
+        $\Rightarrow$ \textbf{$H=0.2306$} (AUC = 0.6866)
+\end{itemize}
 Based on the entropy values computed in (2d), I used the ROC curve and Youden's $J$ statistic to determine a suitable threshold for separating the known classes from the new unwanted class (birds). The best threshold found was:
 \[
-\text{Entropy threshold} = 0.0641
+\text{Entropy threshold} = 0.2306
 \]
 To find this threshold, I computed the Receiver Operating Characteristic (ROC) curve using the entropies as scores, and assigned ground truth labels: 0 for known classes and 1 for the bird class. The ROC curve shows the trade-off between true positive rate (TPR) and false positive rate (FPR) at different thresholds. To select the best threshold, I used Youden’s $J$ statistic, defined as:
 \[
 J = \text{TPR} - \text{FPR}
 \]
 This gives the point on the ROC curve that maximizes the difference between correctly detecting birds and mistakenly removing known samples. In other words, it tries to balance sensitivity and specificity, choosing the threshold that provides the most separation between the two groups.
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=0.8\linewidth]{../plots/roc_curve_entropy.png}
-    \caption{ROC curve using entropy as score. The red dot indicates the threshold chosen by Youden’s $J$ statistic.}
-\end{figure}
-\noindent I applied the selected threshold to all labeled evaluation samples. If an image’s entropy exceeded the threshold, it was considered “uncertain” and removed. The results are summarized below:
+Using the ROC-based threshold ($0.2306$) on the \emph{labelled} part of the new set gave
 \begin{center}
 \begin{tabular}{lcc}
 \toprule
-\textbf{Class} & \textbf{Removed / Total} & \textbf{Percentage} \\
+                                 & Count & Rate \\
 \midrule
-Unwanted class (Birds) & 302 / 413 & 73.12\% \\
-Desired classes (Plane/Ship/Truck) & 711 / 1187 & 59.90\% \\
+Birds detected                   & 222 / 413 & 53.8\,\% \\
+Known images wrongly discarded   &  73 / 1187 &  6.1\,\% \\
 \bottomrule
 \end{tabular}
 \end{center}
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=0.8\linewidth]{../plots/entropy_distribution_with_threshold.png}
-    \caption{Histogram of entropy values for known and unknown classes. The red vertical line marks the selected threshold.}
-\end{figure}
-These figures show that the entropy-based filter successfully removed a large portion of the unwanted class, but at the cost of also removing many images from the known classes. In this case, the threshold trades off recall on birds against precision on known classes. A lower threshold detects more birds but also increases the number of false positives.\\
-\\
-Overall, the method shows promise but requires careful tuning to balance the trade-off between removing unwanted classes and retaining known classes. The ROC curve and Youden's $J$ statistic provided a systematic way to select a threshold, but further experimentation with different thresholds would perhaps give better results.\\
-\\
-\textbf{Alternative Threshold (Midpoint of Means)}\\
-As a simpler alternative, I also tested using a threshold equal to the midpoint between the mean entropies of the known and unknown classes:
-\[
-\text{Threshold}_{\text{mean}} = \frac{\text{Mean}_{\text{known}} + \text{Mean}_{\text{unknown}}}{2} = 0.2936
-\]
-Using this threshold, I detected 192 out of 413 bird images (46.49\%) and mistakenly removed 365 out of 1187 known samples (30.75\%).
+
+That trade-off felt acceptable: I grab over half the birds while only losing $\approx6\%$ of the good data.
+
+%------------------------------------------------------------
+%------------------------------------------------------------
+\subsection*{(2f) Bonus — screening the \emph{unlabeled} 1 600 images}
+Using the ROC-based entropy cut-off of \textbf{$H = 0.2306$}, I passed every image in \texttt{new\_evaluation\_data\_without\_labels.npz} through the MC-Dropout pipeline and flagged samples with $H\ge 0.2306$ as "probably bird":
 \begin{center}
-  \begin{tabular}{lcc}
-  \toprule
-  \textbf{Class} & \textbf{Removed / Total} & \textbf{Percentage} \\
-  \midrule
-  Unwanted class (Birds) & 192 / 413 & 46.49\% \\
-  Desired classes (Plane/Ship/Truck) & 365 / 1187 & 30.75\% \\
-  \bottomrule
+\begin{tabular}{lcc}
+\toprule
+Prediction & Count & Share of 1 600 \\
+\midrule
+Unknown (bird) = 1 & 303  & 18.9\,\% \\
+Known (plane/ship/truck) = 0 & 1 297 & 81.1\,\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+The resulting vector is stored in \texttt{binary\_predictions.npz} (shape \((1600,)\)) and
+included in my submission.
+
+\medskip
+\noindent\textbf{Take-aways.}
+\begin{itemize}
+  \item MC Dropout + entropy \emph{does} separate unseen birds from the three trained classes, albeit imperfectly.
+  \item The ROC-derived threshold gives a nicer precision/recall balance than the simple mean-midpoint.
+  \item Future work: temperature-scaling or mixup might widen the entropy gap even further.
+\end{itemize}
+I could crank recall higher by sliding the threshold left, but the collateral damage on planes/ships/trucks gets ugly fast, so I froze it there.
+%--------------------------------------------------------------------
+\subsection*{Take-Home Points}
+\begin{itemize}
+  \item \textbf{BatchNorm + Nesterov SGD} already gave plenty of regularization; Dropout only helped once I paired it with a smarter LR schedule.
+  \item Tiny scheduler typos matter — fixing “0.01” $\rightarrow$ “$1\!\times\!10^{-2}$” bought me +2 % accuracy.
+  \item \textbf{MC Dropout} plus entropy does flag genuinely novel inputs, though separating them cleanly is still tricky.
+  \item DataLoader CPU tweaks can save a ton of wall-time; don’t skip those.
+\end{itemize}
+
+\noindent That is where I left Task 2. If I could start all over again, I would, but life is short.
+
+\section*{Problem 3: Traffic-Sign Classification \& Interpretability (my learning diary)}
+
+Below is a walk-through of what I did, what I think went well, and the bits that were a little confusing.  
+Big picture: I trained a ResNet-18 from scratch on a small traffic-sign data set, then poked around with saliency and occlusion maps to see \emph{why} it was making the calls it did. I also tried to fix a sneaky “back-door” mistake the model kept falling for.
+
+\subsection*{Tasks (in the order I tackled them)}
+\begin{enumerate}
+  \item[(3a)] Try out both \textbf{local} and \textbf{global} interpretability tricks.
+  \item[(3b)] Train a brand-new ResNet-18 (80/20 stratified split).
+  \item[(3c)] Check how it is doing on validation \& a held-out test set.
+  \item[(3d–e)] Use saliency and occlusion to zoom in on the class that kept failing.
+  \item[(3f)] Code up a “border-drop” augmentation (my attempt to wipe out the back-door).
+  \item[(3g–h)] Retrain \& look again with the same interpretability lenses.
+\end{enumerate}
+
+\subsection*{(3a) Interpretability Methods}
+
+\paragraph{Local view – Class Saliency Maps}  
+For each image I grabbed the gradient $\nabla_x S_c(x)$ of the score for the true class $c$. I then took the max magnitude over the RGB channels and overlaid that heatmap so I could eyeball which pixels were shouting the loudest. (Honestly, getting the color scaling right took me longer than writing the code.)
+
+\paragraph{Global view – Occlusion Analysis}  
+Here I slid a $10\times10$ gray square across the picture, noting how much the logit for the predicted class dropped at every spot. Plotting that drop as a heatmap gives a nice “importance map.” What I understood is: the darker the spot, the more the model would miss it if it vanished.
+
+\subsection*{(3b) Data Prep \& Baseline Training}
+
+\begin{itemize}
+  \item \textbf{Model:} ResNet-18 built from scratch, final FC tweaked to 5 classes.
+  \item \textbf{Split:} 80\% train, 20\% val (stratified) from \texttt{data/problem3/train}.
+  \item \textbf{Augmentations:} resized to $224\times224$, random flip/rotation/affine, a bit of \texttt{ColorJitter}, then \texttt{ToTensor} and \texttt{Normalize} with the data-set mean/std I measured first.
+  \item \textbf{Optimizer:} Adam with $\text{lr}=10^{-3}$ and weight-decay $10^{-4}$; \texttt{ReduceLROnPlateau} when val loss stalled.
+  \item \textbf{Batch size:} 32 — anything larger ran me out of VRAM.  
+        \textbf{Epochs:} 30 (I stopped when the curves flattened).
+\end{itemize}
+
+\subsubsection*{Baseline Validation Results}
+
+\begin{table}[H]
+  \centering
+  \caption{How the first model did on the validation split}
+  \begin{tabular}{lrrrr}
+    \toprule
+    Class & Precision & Recall & F1 & Support \\
+    \midrule
+    restriction signs & 1.0000 & 1.0000 & 1.0000 & 69 \\
+    speed limits      & 1.0000 & 0.9865 & 0.9932 & 223 \\
+    stop signs        & 0.9965 & 1.0000 & 0.9983 & 286 \\
+    warning signs     & 0.9959 & 1.0000 & 0.9979 & 486 \\
+    yield signs       & 1.0000 & 1.0000 & 1.0000 & 36  \\
+    \midrule
+    \multicolumn{4}{l}{\it overall accuracy = 0.9973 on 1100 samples} & \\
+    \bottomrule
   \end{tabular}
-\end{center}  
-Compared to the Youden's $J$ threshold, this midpoint threshold removes fewer known-class samples, but also detects significantly fewer birds. This method may be useful in settings where retaining known-class data is more critical, and some missed detections of unknowns are acceptable.\\
-\\
-This comparison highlights the trade-off between high recall (detecting more birds) and high precision (preserving more known-class samples). The choice of threshold depends on the priorities of the application.
-\subsubsection*{(2f) Final Prediction on Unlabeled Dataset}
-To finalize the filtering pipeline, I passed the 1600 unlabeled images through the trained VGG11BN model with Monte Carlo Dropout enabled. For each image, I computed the entropy of the mean softmax output from 10 stochastic forward passes and classified it as:
-\begin{itemize}
-  \item \textbf{1 (unknown class)} if entropy $\geq$ threshold
-  \item \textbf{0 (known class)} otherwise
-\end{itemize}
-I tested two different thresholds based on the previous analysis:
-\begin{itemize}
-  \item \textbf{Youden's J threshold} ($0.0653$): optimized for recall
-  \item \textbf{Midpoint between means} ($0.2936$): more conservative
-\end{itemize}
-The resulting binary prediction vectors were saved using \texttt{numpy.savez} and submitted as part of the exam. The summary of predictions is shown below:
-\begin{center}
-\begin{tabular}{lcc}
-\toprule
-\textbf{Threshold Strategy} & \textbf{\# Unknowns (1)} & \textbf{\# Known (0)} \\
-\midrule
-Youden's J (0.0653) & 439 & 1161 \\
-Midpoint (0.3052) & 256 & 1344 \\
-\bottomrule
-\end{tabular}
-\end{center}
-This comparison shows how a lower threshold captures more of the unknown class at the cost of removing more known samples, while a higher threshold does the opposite. Depending on the application’s priorities (e.g., minimizing false negatives vs. preserving data), either could be justified.
+\end{table}
 
+\begin{figure}[H]
+  \centering
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{../task3plots/resnet18_baseline_20250428_091819_val_perclass_accuracy_8020.png}
+    \subcaption{Per-class accuracy (val)}
+  \end{minipage}\hfill
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{../task3plots/resnet18_baseline_20250428_091819_confusion_matrix_8020.png}
+    \subcaption{Confusion matrix (val)}
+  \end{minipage}
+  \caption{Baseline ResNet-18 on the 80/20 validation split.}
+\end{figure}
 
+\subsection*{(3c) Baseline Test Results}
+
+\begin{table}[H]
+  \centering
+  \caption{Baseline performance on the never-seen test set}
+  \begin{tabular}{lrrrr}
+    \toprule
+    Class & Precision & Recall & F1 & Support \\
+    \midrule
+    restriction signs & 0.8656 & 0.9877 & 0.9226 & 163 \\
+    speed limits      & 1.0000 & 0.0916 & 0.1679 & 502 \\
+    stop signs        & 0.9983 & 0.9983 & 0.9983 & 597 \\
+    warning signs     & 0.7015 & 0.9990 & 0.8243 &1007 \\
+    yield signs       & 0.9362 & 1.0000 & 0.9670 & 88  \\
+    \midrule
+    \multicolumn{4}{l}{\it overall accuracy = 0.8048 on 2357 samples} & \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{../task3plots/resnet18_baseline_20250428_091819_test_perclass_accuracy.png}
+    \subcaption{Per-class accuracy (test)}
+  \end{minipage}\hfill
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{../task3plots/resnet18_baseline_20250428_091819_test_confusion_matrix.png}
+    \subcaption{Confusion matrix (test)}
+  \end{minipage}
+  \caption{Baseline ResNet-18 on the held-out test set.}
+\end{figure}
+
+\subsubsection*{What blew up (Baseline Failure Insights)}
+
+\begin{itemize}
+  \item \textbf{Big oops on speed-limit signs}: roughly 90 \% of them got mislabeled as \emph{warning} signs.
+  \item The model seems to have latched onto the \textbf{red border} instead of the actual digits — classic spurious cue.
+\end{itemize}
+
+\subsection*{(3d) Saliency Maps for Speed-Limit Signs}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{../task3plots/saliency_speed_limit8020.png}
+  \caption{Saliency maps (baseline) for 10 random speed-limit images.}
+\end{figure}
+
+\subsection*{(3e) Occlusion Analysis for Speed-Limit Signs}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{../task3plots/occlusion_combined_first.png}
+  \caption{Occlusion analysis (baseline): Row 1 = drop-in-logit heatmap, Row 2 = most-likely class after each patch, Row 3 = 1D sensitivity profile.\\ When the left corner is occluded, the model panics and thinks it sees a \emph{stop sign}.}
+\end{figure}
+
+\paragraph{What I noticed}
+\begin{itemize}
+  \item \textbf{Occlusion heatmap}: the hottest pixels line up with the digits, which is reassuring.
+  \item \textbf{Fallback class under occlusion}: whenever I hide the digits, the model nervously switches to \emph{stop sign}. So that is its “panic button.”
+  \item \textbf{Global confusion on intact inputs}: on the full test set it most often confuses speed limits with \emph{warning signs} (see confusion matrix). Thus its two fallback modes differ between the intact‐image and occluded‐patch settings.
+  \item \textbf{1D sensitivity bumps}: peaks match the width of each numeral, which is neat.
+\end{itemize}
+
+\paragraph{So\,… now what?}
+\begin{enumerate}
+  \item \textbf{Focus vs.\ background}: Good — the digits matter more than scenery.
+  \item \textbf{Panic behavior}: Maybe collect more “speed vs.\ stop” look‐alikes to teach it the difference under occlusion.
+  \item \textbf{Global mis‐classification}: augment with “speed vs.\ warning” negatives so it learns to distinguish them on full images.
+  \item \textbf{Random occlusions}: sprinkling those in training might make it less skittish when digits vanish.
+\end{enumerate}
+
+\subsection*{Takeaways so far}
+\begin{itemize}
+  \item Digits truly drive the decision.
+  \item When digits vanish, red \(=\) stop in the model’s head.
+  \item On intact images, if digits are present but ambiguous it still leans “warning sign.”
+  \item Some weird corner hotspots are probably preprocessing junk; I should clean that up.
+\end{itemize}
+
+\subsection*{(3f) Trying to erase the back-door}
+
+Saliency suggested the model had a \emph{border back-door}. My idea was to:
+
+\paragraph{1. Wipe out the border (BorderDrop)}
+\begin{lstlisting}[language=Python]
+class BorderDrop:
+    def __init__(self, p=0.7, band_range=(5, 15)):
+        self.p, self.band_range = p, band_range
+    def __call__(self, img):
+        if torch.rand(1).item() < self.p:
+            b = int(torch.randint(*self.band_range, (1,)).item())
+            img[:, :b, :] = img[:, -b:, :] = img[:, :, :b] = img[:, :, -b:] = 0
+        return img
+\end{lstlisting}
+
+\paragraph{2. Mix in general patch-level noise}
+\begin{lstlisting}[language=Python]
+  bd_tf = v2.Compose([
+    # resize, geometric & color augmentations
+    v2.Resize((224,224)),
+    v2.RandomHorizontalFlip(p=0.5),
+    v2.RandomRotation(degrees=15),
+    v2.RandomAffine(degrees=0, translate=(0.1,0.1), scale=(0.9,1.1)),
+    v2.ColorJitter(brightness=0.2, contrast=0.2,
+                   saturation=0.2, hue=0.05),
+
+    # tensor conversion & normalization
+    v2.ToImage(),
+    v2.ToDtype(torch.float32, scale=True),
+    v2.Normalize(mean=t_mean.tolist(),
+                 std=t_std.tolist()),
+
+    # backdoor‐specific defense
+    # BorderDrop(p=0.7, band_range=(5,15)), # dropped due to not making num_workers work > 0.
+
+    # general patch-level robustness
+    v2.RandomErasing(p=0.5,
+                  scale=(0.02,0.10), # patch size as fraction of image
+                  ratio=(0.3,3.3), # aspect ratio of patch
+                  value=0.0), # zero patch value
+])
+\end{lstlisting}
+
+\paragraph{Note to self} \mbox{}\\
+I had to comment out \texttt{BorderDrop} because my DataLoader froze (still not 100 \% sure why), but \texttt{RandomErasing} stayed. Im thinking that my "homemade" border-drop augmentation is not compatible with the DataLoader's multiprocessing. But at this time I could not bare having just 3 batches per second compared to 15 with the DataLoader. I would look deeper into it, but I just feel like enough is enough by now.
+\subsection*{(3g) Results after retraining (border-drop still disabled)}
+
+\subsubsection*{Validation}
+
+\begin{table}[H]
+  \centering
+  \caption{Validation summary after retraining}
+  \begin{tabular}{lrrrr}
+    \toprule
+    Class & Precision & Recall & F1 & Support \\
+    \midrule
+    restriction signs & 1.0000 & 1.0000 & 1.0000 & 69 \\
+    speed limits      & 1.0000 & 0.9865 & 0.9932 & 223 \\
+    stop signs        & 0.9965 & 1.0000 & 0.9983 & 286 \\
+    warning signs     & 0.9959 & 1.0000 & 0.9979 & 486 \\
+    yield signs       & 1.0000 & 1.0000 & 1.0000 & 36  \\
+    \midrule
+    \multicolumn{4}{l}{\it accuracy = 0.9973 on 1100 samples} & \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{../task3plots/resnetfixed_val_perclass_accuracy_bd8020.png}
+    \subcaption{Per-class accuracy (val)}
+  \end{minipage}\hfill
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{../task3plots/resnetfixed_confusion_matrix_bd8020.png}
+    \subcaption{Confusion matrix (val)}
+  \end{minipage}
+  \caption{Validation metrics after the extra augmentations.}
+\end{figure}
+
+\subsubsection*{Test}
+
+\begin{table}[H]
+  \centering
+  \caption{Test summary after retraining}
+  \begin{tabular}{lrrrr}
+    \toprule
+    Class & Precision & Recall & F1 & Support \\
+    \midrule
+    restriction signs & 1.0000 & 0.9939 & 0.9969 & 163 \\
+    speed limits      & 0.9645 & 0.9741 & 0.9693 & 502 \\
+    stop signs        & 1.0000 & 1.0000 & 1.0000 & 597 \\
+    warning signs     & 0.9860 & 0.9821 & 0.9841 &1007 \\
+    yield signs       & 1.0000 & 1.0000 & 1.0000 & 88  \\
+    \midrule
+    \multicolumn{4}{l}{\it accuracy = 0.9864 on 2357 samples} & \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{../task3plots/resnetfixed_test_perclass_accuracy_bd.png}
+    \subcaption{Per-class accuracy (test)}
+  \end{minipage}\hfill
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{../task3plots/resnetfixed_test_confusion_matrix_bd.png}
+    \subcaption{Confusion matrix (test)}
+  \end{minipage}
+  \caption{Test metrics after the extra augmentations.}
+\end{figure}
+
+\paragraph{Quick thoughts}
+\begin{itemize}
+  \item \textbf{Overall accuracy 98.64 \%} is solid.
+  \item Still some \emph{speed ↔ warning} mix-ups (13 and 18 cases respectively) — probably that border cue wasn not fully killed.
+  \item I never actually ran \texttt{BorderDrop}, so unsurprisingly the back-door is not 100 \% gone.
+\end{itemize}
+
+\subsection*{(3h) Fresh Saliency \& Occlusion Maps}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{../task3plots/saliency_speed_limit_test.png}
+  \caption{Saliency after retraining (small sample).}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{../task3plots/occlusion_combined8020.png}
+  \caption{Occlusion after retraining (small sample).}
+\end{figure}
+
+\section*{Conclusion (where I ended up)}
+
+I uncovered a big weakness on speed-limit signs, spotted it using saliency \& occlusion, and drafted a border-drop augmentation to fix it.  
+Sadly, a DataLoader hiccup and my unwillingness to train a model without it and/or debug it meant \texttt{BorderDrop} never actually ran, so the residual confusion makes sense. Even so, the extra random erasing helped a lot. I also tried to crop the part of the training images that were causing the back-door, but that did not work out, yielding almost the same result. I think the model was still able to learn the border cue from the other images. I omitted that part from the report, but it is documented in my appended jupyter notebook.
+
+\subsubsection*{update on border-drop}
+I finally did it with number of workers = 0 , and it took 40 minutes to train. the results were negligible, but I think the model was able to learn the border cue from the other images again.
 
 \end{document}

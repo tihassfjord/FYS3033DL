@@ -1,0 +1,1634 @@
+"""
+Utility functions for deep learning projects.
+
+This module provides helper functions and classes for:
+- Data loading and preprocessing
+- Model training and evaluation
+- Interpretability and visualization
+- Reproducibility
+"""
+
+import os
+import random
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from glob import glob
+from PIL import Image
+
+# ------------------------------------------------------------------------------
+# Reproducibility
+# ------------------------------------------------------------------------------
+
+def set_seed(seed=42):
+    """
+    Set seeds for reproducible results across runs.
+    
+    This function sets the seed for all random number generators to ensure
+    consistent results in PyTorch experiments.
+    
+    Args:
+        seed (int): The seed value to use
+    """
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+# ------------------------------------------------------------------------------
+# Dataset and DataLoader Utilities
+# ------------------------------------------------------------------------------
+
+class ImageDataset(Dataset):
+    """
+    Dataset class for loading images stored in a NumPy array.
+    
+    Handles both (N, H, W, C) and (N, C, H, W) formats, normalizes to [0,1],
+    and supports optional transformations.
+    
+    Args:
+        images (np.ndarray): Image array with shape (N, H, W, C) or (N, C, H, W)
+        labels (np.ndarray, optional): Label array with shape (N,)
+        transform: Optional transforms to apply to images
+        device (str): Device to move tensors to ('cpu' or 'cuda')
+    """
+    def __init__(self, images: np.ndarray, labels: np.ndarray = None, transform=None, device='cpu'):
+        self.images = images.astype(np.float32) / 255.0
+        self.labels = labels
+        self.transform = transform
+        self.device = device
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        img = self.images[idx]
+
+        if img.ndim == 3 and img.shape[-1] == 3:  # HWC → CHW
+            img = np.transpose(img, (2, 0, 1))
+
+        img = torch.from_numpy(img)  # float32 tensor in CHW
+        if self.transform:
+            img = self.transform(img)
+
+        # Move to GPU (or specified device)
+        img = img.to(self.device, non_blocking=True)
+
+        if self.labels is not None:
+            label = torch.tensor(self.labels[idx], dtype=torch.long, device=self.device)
+            return img, label
+        else:
+            return img
+
+
+def create_dataloaders(
+    train_dataset=None,
+    val_dataset=None,
+    batch_size=32,
+    num_workers=None,
+    pin_memory=True,
+    mode='both',
+    shuffle_train=True,
+    shuffle_val=False
+):
+    """
+    Creates PyTorch dataloaders for training and/or validation.
+
+    Args:
+        train_dataset (Dataset): Dataset for training
+        val_dataset (Dataset): Dataset for validation
+        batch_size (int): Batch size for loading
+        num_workers (int, optional): CPU workers for data loading
+        pin_memory (bool): Whether to pin memory (recommended for GPU training)
+        mode (str): 'train', 'val', or 'both' – selects which loaders to return
+        shuffle_train (bool): Whether to shuffle training data
+        shuffle_val (bool): Whether to shuffle validation data
+
+    Returns:
+        dict: Dictionary containing one or both of the keys: 'train', 'val'
+    """
+    if num_workers is None:
+        num_workers = 0
+
+    loaders = {}
+
+    if mode in ['train', 'both']:
+        assert train_dataset is not None, "train_dataset must be provided when mode is 'train' or 'both'"
+        loaders['train'] = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=shuffle_train,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=num_workers > 0
+        )
+
+    if mode in ['val', 'both']:
+        assert val_dataset is not None, "val_dataset must be provided when mode is 'val' or 'both'"
+        loaders['val'] = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=shuffle_val,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=num_workers > 0
+        )
+
+    return loaders
+
+
+# ------------------------------------------------------------------------------
+# Data Loading and Processing
+# ------------------------------------------------------------------------------
+
+def load_problem2_data():
+    """
+    Load the data for problem 2 from NPZ files.
+    
+    Returns:
+        tuple: Training images, training labels, validation images, validation labels
+    """
+    train_path = os.path.join('data', 'problem2', 'training_data.npz')
+    val_path = os.path.join('data', 'problem2', 'evaluation_data.npz')
+
+    training_data = np.load(train_path)
+    training_images = training_data['a']
+    training_labels = training_data['b']
+
+    val_data = np.load(val_path)
+    val_images = val_data['a']
+    val_labels = val_data['b']
+
+    print('training_images shape:', training_images.shape)
+    print('training_labels shape:', training_labels.shape)
+    print('val_images shape:', val_images.shape)
+    print('val_labels shape:', val_labels.shape)
+
+    return training_images, training_labels, val_images, val_labels
+
+
+def compute_npz_mean_std(source):
+    """
+    Computes per-channel mean and standard deviation from image data.
+    
+    Args:
+        source (str or np.ndarray): File path to NPZ file or NumPy array with image data
+    
+    Returns:
+        tuple: (mean, std) arrays with per-channel statistics
+    """
+    import numpy as np
+
+    if isinstance(source, str):
+        data = np.load(source)
+        images = data['a']
+    elif isinstance(source, np.ndarray):
+        images = source
+    else:
+        raise ValueError("source must be a file path or a numpy ndarray.")
+
+    # Normalize if images are uint8
+    if images.dtype == 'uint8':
+        images = images.astype(np.float32) / 255.0
+
+    if images.ndim != 4:
+        raise ValueError(f"Expected a 4D array but got shape {images.shape}")
+
+    # Determine the image format and compute statistics
+    if images.shape[1] == 3:
+        # images in (N, C, H, W) format
+        mean = np.mean(images, axis=(0, 2, 3))
+        std = np.std(images, axis=(0, 2, 3))
+    elif images.shape[3] == 3:
+        # images in (N, H, W, C) format
+        mean = np.mean(images, axis=(0, 1, 2))
+        std = np.std(images, axis=(0, 1, 2))
+    else:
+        raise ValueError(f"Could not determine image format from shape {images.shape}")
+
+    print("Computed mean:", mean)
+    print("Computed std:", std)
+    return mean, std
+
+
+def load_images_as_numpy(root_dir, image_size=(224, 224)):
+    """
+    Loads all images in a directory (recursively), resizes, and converts to NumPy array.
+    
+    Args:
+        root_dir (str): Root directory to search for images
+        image_size (tuple): Target size (width, height) for images
+        
+    Returns:
+        np.ndarray: Array of images with shape (N, H, W, C)
+    """
+    image_paths = glob(os.path.join(root_dir, '**', '*.*'), recursive=True)
+    images = []
+
+    for path in image_paths:
+        try:
+            img = Image.open(path).convert('RGB').resize(image_size)
+            img_np = np.array(img).astype(np.float32) / 255.0  # (H, W, C), scaled
+            images.append(img_np)
+        except Exception as e:
+            print(f"Skipped {path}: {e}")
+
+    # Result: shape (N, H, W, C)
+    return np.stack(images)
+
+
+# ------------------------------------------------------------------------------
+# Uncertainty Estimation and Interpretation
+# ------------------------------------------------------------------------------
+
+def compute_entropy(probabilities: np.ndarray) -> float:
+    """
+    Computes the entropy H(y_hat) = - sum(p_i log(p_i)) for a 1D array of probabilities.
+    
+    Args:
+        probabilities (np.ndarray): Array of probability values
+        
+    Returns:
+        float: Entropy value
+    """
+    eps = 1e-9
+    p = np.clip(probabilities, eps, 1.0)
+    return -np.sum(p * np.log(p))
+
+
+def mc_dropout_inference(model, image, T=10, device='cuda'):
+    """
+    Perform MC Dropout inference on a single image using T stochastic forward passes.
+    
+    This function assumes the model is already in .eval() mode with dropout manually enabled.
+    
+    Args:
+        model: PyTorch model with dropout layers
+        image: Input image tensor (C, H, W), unbatched
+        T (int): Number of stochastic forward passes
+        device (str): Device to run model on
+
+    Returns:
+        tuple: (mean_softmax, entropy) where mean_softmax is the mean predicted 
+               probabilities over T passes, and entropy is a measure of uncertainty
+    """
+    model.to(device)  
+    model.eval()  # Ensure model is in eval mode
+    image = image.unsqueeze(0).to(device)  # add batch dim: (1, C, H, W)
+
+    softmaxes = []
+    with torch.no_grad():
+        for _ in range(T):
+            output = model(image)
+            softmax = F.softmax(output, dim=1).squeeze().cpu()
+            softmaxes.append(softmax)
+
+    mean_softmax = torch.stack(softmaxes, dim=0).mean(dim=0)
+    entropy = -torch.sum(mean_softmax * torch.log(mean_softmax + 1e-10)).item()
+    return mean_softmax, entropy
+
+
+def enable_dropout(model):
+    """
+    Enable dropout layers during evaluation for uncertainty estimation.
+    
+    Args:
+        model: PyTorch model with dropout layers
+    """
+    for m in model.modules():
+        if isinstance(m, torch.nn.Dropout):
+            m.train()
+
+
+def visualize_occlusion_analysis(model, image_tensor, label, class_names, occlusion_size=10, baseline_tf=None, device='cuda'):
+    """
+    Performs occlusion analysis on an image and visualizes the results.
+    
+    Args:
+        model: PyTorch model
+        image_tensor: Input image tensor (CxHxW)
+        label: True label index
+        class_names: List of class names
+        occlusion_size: Size of the occlusion patch
+        baseline_tf: Transform to apply to occluded images
+        device: Device to run model on ('cuda' or 'cpu')
+    
+    Returns:
+        tuple: (heatmap, class_pixels, counters) showing confidence drop, class predictions,
+               and class prediction counts during occlusion
+    """
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    from matplotlib.colors import BoundaryNorm
+    from matplotlib.colorbar import ColorbarBase
+    from matplotlib import cm
+    from collections import defaultdict
+    import matplotlib.pyplot as plt
+    
+    # Input tensor for model prediction
+    input_tensor = image_tensor.unsqueeze(0).to(device)
+    
+    # Original image data for display
+    img = image_tensor.permute(1, 2, 0).cpu().numpy()  # Move to CPU and permute to HWC format for imshow
+    
+    # Display the original image
+    plt.figure(figsize=(6, 6))
+    plt.imshow(img)
+    plt.title(f"Original Image: {class_names[label]}")
+    plt.axis('off')
+    plt.show()
+    
+    # Get original prediction without occlusion
+    model.eval()
+    with torch.no_grad():
+        original_pred = model(input_tensor).cpu().numpy()
+        original_prob = np.exp(original_pred) / np.sum(np.exp(original_pred))
+        pred_class = np.argmax(original_pred[0])
+        
+    print(f"Original prediction: {class_names[pred_class]} (confidence: {original_prob[0][pred_class]:.4f})")
+    
+    # Image dimensions
+    img_size = img.shape[0]  # Size of the image
+    
+    print('Running occlusion analysis...')
+    
+    # Create heatmap to store importance of each region
+    heatmap = np.zeros((img_size, img_size), np.float32)
+    
+    # Store the predicted class for each occluded region
+    class_pixels = np.zeros((img_size, img_size), np.int16)
+    
+    # Keep track of prediction counts
+    counters = defaultdict(int)
+    
+    # Run occlusion analysis
+    for n, (x, y, occluded_img) in enumerate(iter_occlusion(img, size=occlusion_size)):
+        if n % 50 == 0:
+            print(f'Processing occlusion {n}...')
+            
+        # Convert the occluded image to a tensor and normalize it
+        occluded_tensor = torch.from_numpy(occluded_img).permute(2, 0, 1).float()
+        if baseline_tf:
+            occluded_tensor = baseline_tf(occluded_tensor)
+        occluded_tensor = occluded_tensor.unsqueeze(0).to(device)
+        
+        # Get model prediction for occluded image
+        with torch.no_grad():
+            occluded_pred = model(occluded_tensor).cpu().numpy()
+            
+        # Store the change in confidence for the correct class
+        confidence_drop = original_pred[0][label] - occluded_pred[0][label]
+        heatmap[y:y + occlusion_size, x:x + occlusion_size] = confidence_drop
+        
+        # Store the predicted class for this occluded region
+        pred_class = np.argmax(occluded_pred[0])
+        class_pixels[y:y + occlusion_size, x:x + occlusion_size] = pred_class
+        counters[pred_class] += 1
+    
+    # Normalize the heatmap for better visualization
+    heatmap_normalized = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
+    
+    # Plot the results
+    plt.figure(figsize=(15, 5))
+    
+    # Original image
+    plt.subplot(1, 3, 1)
+    plt.imshow(img)
+    plt.title("Original Image")
+    plt.axis('off')
+    
+    # Heatmap
+    plt.subplot(1, 3, 2)
+    plt.imshow(heatmap_normalized, cmap='hot')
+    plt.title("Occlusion Sensitivity Map")
+    plt.colorbar(label='Normalized Confidence Drop')
+    plt.axis('off')
+    
+    # Overlay heatmap on original image
+    plt.subplot(1, 3, 3)
+    plt.imshow(img)
+    plt.imshow(heatmap_normalized, cmap='hot', alpha=0.5)
+    plt.title("Overlay")
+    plt.axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Create detailed visualization
+    fig = plt.figure(figsize=(12, 5))
+    
+    # First subplot - heatmap showing confidence drop
+    ax1 = plt.subplot(1, 2, 1, aspect='equal')
+    hm = ax1.imshow(heatmap)
+    ax1.set_title("Confidence Drop when Region is Occluded")
+    ax1.set_xticks([])
+    ax1.set_yticks([])
+    
+    # Second subplot - class prediction when region is occluded
+    ax2 = plt.subplot(1, 2, 2, aspect='equal')
+    vals = np.unique(class_pixels).tolist()
+    bounds = vals + [vals[-1] + 1]  # add an extra item for the colormap boundaries
+    
+    # Create a custom colormap with distinct colors for each class
+    custom = cm.get_cmap('tab10', len(bounds)) # using tab10 for clearer distinction
+    norm = BoundaryNorm(bounds, custom.N)
+    
+    cp = ax2.imshow(class_pixels, norm=norm, cmap=custom)
+    ax2.set_title("Class Prediction when Region is Occluded")
+    ax2.set_xticks([])
+    ax2.set_yticks([])
+    
+    # Add colorbar for the heatmap
+    divider = make_axes_locatable(ax1)
+    cax1 = divider.append_axes("right", size="5%", pad=0.05)
+    cbar1 = plt.colorbar(hm, cax=cax1)
+    cbar1.set_label('Confidence Drop')
+    
+    # Add colorbar for the class predictions
+    divider = make_axes_locatable(ax2)
+    cax2 = divider.append_axes("right", size="5%", pad=0.05)
+    cbar2 = ColorbarBase(cax2, cmap=custom, norm=norm,
+                        ticks=[(a + b) / 2.0 for a, b in zip(bounds[:-1], bounds[1:])],
+                        boundaries=bounds, spacing='uniform', orientation='vertical')
+    
+    # Set the labels for each class in the colorbar
+    class_labels = [class_names[i] if i < len(class_names) else f"Class {i}" for i in vals]
+    cbar2.ax.set_yticklabels(class_labels)
+    cbar2.set_label('Predicted Class')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Print summary of confidence drop and class predictions
+    print(f"Original image class: {class_names[label]}")
+    print("\nMost predicted classes during occlusion:")
+    for class_id, count in sorted(counters.items(), key=lambda x: -x[1]):
+        percentage = (count / sum(counters.values())) * 100
+        print(f"{class_names[class_id]}: {count} occurrences ({percentage:.2f}%)")
+        
+    return heatmap, class_pixels, counters
+
+
+# ------------------------------------------------------------------------------
+# Utility Functions
+# ------------------------------------------------------------------------------
+
+def print_framed_metrics(val_loss, val_acc):
+    """
+    Prints validation loss and accuracy inside a pretty ASCII box.
+    
+    Args:
+        val_loss (float): Validation loss
+        val_acc (float): Validation accuracy
+    """
+    msg = f"Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_acc:.4f}"
+    border = '+' + '-' * (len(msg) + 2) + '+'
+    print(border)
+    print(f"| {msg} |")
+    print(border)
+
+
+def iter_occlusion(img, size=10, stride=None):
+    """
+    Generate occluded versions of an image for occlusion sensitivity analysis.
+    
+    Args:
+        img: Input image (H, W, C)
+        size (int): Size of occlusion patch
+        stride (int, optional): Stride for occlusion window
+        
+    Yields:
+        tuple: (x, y, occluded_image) containing the position and resulting occluded image
+    """
+    if stride is None:
+        stride = size // 2
+        
+    h, w = img.shape[:2]
+    
+    # Create a copy of the image for occlusion
+    for y in range(0, h - size + 1, stride):
+        for x in range(0, w - size + 1, stride):
+            occluded = img.copy()
+            # Create a gray occlusion patch (could use black, mean color, etc.)
+            occluded[y:y + size, x:x + size, :] = 0.5
+            yield x, y, occluded
+
+
+if __name__ == "__main__":
+    print("This is a utility module. It is not meant to be run directly.")
+
+
+
+"""
+Neural Network Training Module
+
+This module provides the functionality to train deep learning models with
+comprehensive tracking of metrics, early stopping, learning rate scheduling,
+and visualization of training progress.
+
+Key features:
+- Training with multiple phases (train/validation)
+- Progress tracking with tqdm
+- Model checkpointing (best model saving)
+- Early stopping to prevent overfitting
+- Learning rate scheduling compatibility
+- Training metrics visualization
+- CSV logging of training metrics
+
+Example usage:
+    model = YourModel()
+    dataloaders = {'train': train_loader, 'val': val_loader}
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+    
+    trained_model, model_name = train_model(
+        model, dataloaders, criterion, optimizer,
+        scheduler=scheduler, num_epochs=20, patience=5
+    )
+"""
+
+from tqdm import tqdm
+import torch
+import time
+import os
+import matplotlib.pyplot as plt 
+from datetime import datetime
+import copy
+
+
+def ensure_dir(path):
+    """
+    Create directory if it doesn't exist.
+    
+    Args:
+        path (str): Directory path to create
+    """
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+
+def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device='cuda',
+                num_epochs=10, model_name='model', patience=10):
+    """
+    Train a PyTorch model with comprehensive progress tracking and visualization.
+    
+    The function handles the complete training workflow including:
+    - Training and validation phases
+    - Early stopping based on validation accuracy
+    - Learning rate scheduling
+    - Model checkpointing (saves best model)
+    - Progress visualization
+    - Metrics logging
+    
+    Args:
+        model: PyTorch model to train
+        dataloaders: Dictionary with 'train' and 'val' data loaders
+        criterion: Loss function
+        optimizer: PyTorch optimizer
+        scheduler: Learning rate scheduler (optional)
+        device: Device to train on ('cuda' or 'cpu')
+        num_epochs: Maximum number of training epochs
+        model_name: Base name for saved model files
+        patience: Number of epochs to wait for improvement before early stopping
+    
+    Returns:
+        tuple: (trained_model, model_name) - The trained model and its unique name
+    """
+    # Create unique model name with timestamp
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    model_name = f"{model_name}_{timestamp}"
+
+    # Initialize tracking variables
+    start_time = time.time()
+    best_acc = 0.0
+    best_loss = float('inf')  # Initialize best loss for comparison
+    best_model_wts = None
+    best_epoch = 0  # Track which epoch had the best val accuracy
+
+    # Lists to store training metrics
+    train_losses = []
+    val_accuracies = []
+    val_losses = []
+    lr_rates = []
+
+    # Setup progress bar
+    total_steps = num_epochs * sum(len(loader) for loader in dataloaders.values())
+    global_loop = tqdm(total=total_steps, desc=f"Training {model_name}", unit='batch')
+
+    # Training loop
+    for epoch in range(num_epochs):
+        
+        # Track the current learning rate
+        current_lr = optimizer.param_groups[0]['lr']
+        lr_rates.append(current_lr)
+
+        # Each epoch has a training and validation phase
+        for phase in ['train', 'val']:
+            # Set model to training mode or evaluation mode
+            model.train() if phase == 'train' else model.eval()
+
+            # Initialize metrics for this phase
+            running_loss = 0.0
+            running_corrects = 0
+            total_samples = 0
+
+            # Iterate over data batches
+            for inputs, labels in dataloaders[phase]:
+                inputs, labels = inputs.to(device), labels.to(device)
+                
+                # Zero the parameter gradients
+                optimizer.zero_grad()
+
+                # Forward pass - track gradients only during training
+                with torch.set_grad_enabled(phase == 'train'):
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
+                    _, preds = torch.max(outputs, 1)
+
+                    # Backward + optimize only in training phase
+                    if phase == 'train':
+                        loss.backward()
+                        optimizer.step()
+                        
+                        # Step the scheduler if it's not ReduceLROnPlateau
+                        # (ReduceLROnPlateau needs validation metrics to step)
+                        if scheduler and not isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                            scheduler.step()
+                            
+                # Accumulate batch statistics
+                running_loss += loss.item() * inputs.size(0)
+                running_corrects += torch.sum(preds == labels.data)
+                total_samples += inputs.size(0)
+
+                # Update progress bar with batch info
+                batch_acc = (torch.sum(preds == labels.data).item() / inputs.size(0))
+                global_loop.set_postfix({
+                    'epoch': f"{epoch+1}/{num_epochs}",
+                    'phase': phase,
+                    'loss': f'{loss.item():.4f}',
+                    'acc': f'{batch_acc:.4f}'
+                })
+                global_loop.update(1)
+
+            # Calculate epoch statistics
+            epoch_loss = running_loss / total_samples
+            epoch_acc = running_corrects.double() / total_samples
+
+            # Store validation metrics
+            if phase == 'val':
+                val_accuracies.append(epoch_acc.item())
+                val_losses.append(epoch_loss)
+
+                # Check if this is the best validation accuracy
+                # Also use loss as a tiebreaker when accuracies are equal
+                if epoch_acc > best_acc or (epoch_acc == best_acc and epoch_loss < best_loss):
+                    best_loss = epoch_loss
+                    best_acc = epoch_acc
+                    best_model_wts = copy.deepcopy(model.state_dict())
+                    best_epoch = epoch  # Update the best epoch tracker
+                
+                # Uncomment to show patience counter when no improvement
+                # else:
+                #     # Print patience remaining if no improvement
+                #     tqdm.write(f"Patience remaining: {patience - (epoch - best_epoch)}")
+            else:
+                # Store training metrics
+                train_losses.append(epoch_loss)
+
+        # Step the ReduceLROnPlateau scheduler after validation
+        if scheduler is not None:
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                # Use the monitored metric based on the scheduler mode
+                metric = epoch_loss if scheduler.mode == 'min' else epoch_acc
+                scheduler.step(metric)
+            
+        # Early stopping check
+        if epoch - best_epoch >= patience:
+            print(f"\nEarly stopping triggered at epoch {epoch+1}.")
+            print(f"Best validation accuracy was {best_acc:.4f} at epoch {best_epoch+1}.")
+            break
+
+    # Finalize training
+    global_loop.close()
+    print(f"\nBest Val Accuracy: {best_acc:.4f}")
+    print(f"Total training time: {time.time() - start_time:.2f}s")
+
+    # Load the best model weights
+    if best_model_wts is not None:
+        model.load_state_dict(best_model_wts)
+
+    # Save model files
+    ensure_dir("models")
+    # Uncomment to save final model weights as well
+    # torch.save(model.state_dict(), f"models/{model_name}_final.pth")
+    torch.save(best_model_wts, f"models/{model_name}_best.pth")
+
+    # Save metrics to CSV
+    ensure_dir("logs")
+    with open(f"logs/{model_name}_metrics.csv", 'w') as f:
+        f.write("epoch,train_loss,val_loss,val_acc,lr\n")
+        for i in range(len(val_accuracies)):
+            lr = lr_rates[i]
+            f.write(f"{i+1},{train_losses[i]:.4f},{val_losses[i]:.4f},{val_accuracies[i]:.4f},{lr:.8f}\n")
+
+    # Generate and save visualization of training metrics
+    visualize_training_metrics(
+        train_losses, val_losses, val_accuracies, lr_rates, 
+        epochs=len(val_accuracies), model_name=model_name
+    )
+
+    return model, model_name
+
+
+def visualize_training_metrics(train_losses, val_losses, val_accuracies, lr_rates, epochs, model_name):
+    """
+    Create and save visualization of training metrics.
+    
+    Args:
+        train_losses (list): Training loss per epoch
+        val_losses (list): Validation loss per epoch
+        val_accuracies (list): Validation accuracy per epoch
+        lr_rates (list): Learning rates per epoch
+        epochs (int): Number of epochs completed
+        model_name (str): Name for saved plot file
+    """
+    # Plotting training curves: 3 subplots
+    plt.figure(figsize=(18, 5))  # make room for 3 panels
+
+    # Subplot 1: Training Loss vs Epoch
+    plt.subplot(1, 3, 1)
+    plt.plot(range(1, epochs+1), train_losses, marker='o', label='Training Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training Loss')
+    plt.grid(True)
+    plt.legend()
+
+    # Subplot 2: Validation Accuracy vs Epoch
+    plt.subplot(1, 3, 2)
+    plt.plot(range(1, epochs+1), val_accuracies, marker='o', label='Validation Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.title('Validation Accuracy')
+    plt.grid(True)
+    plt.legend()
+
+    # Subplot 3: Learning Rate and Validation Loss vs Epoch together
+    plt.subplot(1, 3, 3)
+    epoch_range = range(1, epochs+1)
+    
+    # Primary y-axis: Learning Rate
+    ax1 = plt.gca()
+    ax1.plot(epoch_range, lr_rates[:epochs], marker='o', color='tab:blue', label='Learning Rate')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Learning Rate', color='tab:blue')
+    ax1.tick_params(axis='y', labelcolor='tab:blue')
+    ax1.grid(True)
+
+    # Secondary y-axis: Validation Loss
+    ax2 = ax1.twinx()
+    ax2.plot(epoch_range, val_losses, marker='o', color='tab:red', label='Validation Loss')
+    ax2.set_ylabel('Validation Loss', color='tab:red')
+    ax2.tick_params(axis='y', labelcolor='tab:red')
+
+    plt.title('Learning Rate & Validation Loss')
+    
+    # Combine legends from both axes
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+
+    plt.tight_layout()
+    ensure_dir("plots")
+    plt.savefig(f"plots/{model_name}_training.png")
+    plt.show()
+
+
+if __name__ == '__main__':
+    """
+    Example usage script.
+    
+    To use this module directly, uncomment and modify the example code below:
+    
+    import torch.nn as nn
+    import torch.optim as optim
+    from torch.utils.data import DataLoader
+    from torchvision import models
+    
+    # Define your model
+    model = models.resnet18(pretrained=True)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    
+    # Set up data loaders
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=32)
+    dataloaders = {'train': train_loader, 'val': val_loader}
+    
+    # Configure training
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=3)
+    
+    # Determine device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    
+    # Train model
+    trained_model, model_name = train_model(
+        model, dataloaders, criterion, optimizer, 
+        scheduler=scheduler, device=device, 
+        num_epochs=20, patience=5
+    )
+    """
+    
+    # Placeholder for example execution
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"This module provides training functionality to be imported. Device: {device}")
+
+
+
+
+"""
+Model Evaluation Module
+
+This module provides comprehensive tools for evaluating deep learning models,
+particularly for classification tasks. It includes functions for generating
+various evaluation metrics, visualizations, and performance analyses.
+
+Key features:
+- Classification performance metrics (accuracy, precision, recall, F1)
+- Confusion matrix visualization
+- ROC curves for multi-class classification
+- Per-class accuracy analysis
+- Prediction visualization
+- Entropy distribution analysis for uncertainty quantification
+- Calibration analysis
+
+Example usage:
+    model = YourModel()
+    dataloader = test_dataloader
+    class_names = ['Cat', 'Dog', 'Bird']
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Get model performance summary
+    loss, acc, y_true, y_pred = classification_summary(
+        model, dataloader, criterion, device, class_names
+    )
+
+    # Visualize confusion matrix
+    plot_confusion_matrix(model, dataloader, device, class_names)
+
+    # Generate ROC curves
+    plot_multiclass_roc(model, dataloader, device, num_classes=3, class_names=class_names)
+"""
+
+import torch
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report
+from sklearn.metrics import precision_recall_fscore_support, balanced_accuracy_score
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
+from sklearn.preprocessing import label_binarize
+from sklearn.metrics import accuracy_score
+from sklearn.calibration import calibration_curve
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+import os
+from tqdm import tqdm
+
+
+def ensure_dir(path):
+    """
+    Create directory if it doesn't exist.
+    
+    Args:
+        path (str): Directory path to create
+    """
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+
+def collect_predictions(model, dataloader, device):
+    """
+    Collect true labels and model predictions from a dataloader.
+    
+    Args:
+        model (torch.nn.Module): The trained model
+        dataloader (DataLoader): DataLoader for the dataset to evaluate
+        device (torch.device): The device to run inference on
+    
+    Returns:
+        tuple: (y_true, y_pred, y_scores) where:
+            - y_true is a list of true labels
+            - y_pred is a list of predicted labels
+            - y_scores is a numpy array of prediction scores (logits)
+    """
+    model.eval()
+    y_true = []
+    y_pred = []
+    y_scores = []
+    
+    with torch.no_grad():
+        for inputs, labels in tqdm(dataloader, desc="Collecting predictions"):
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, preds = torch.max(outputs, 1)
+            
+            y_true.extend(labels.cpu().numpy())
+            y_pred.extend(preds.cpu().numpy())
+            y_scores.extend(outputs.cpu().numpy())
+    
+    return np.array(y_true), np.array(y_pred), np.array(y_scores)
+
+
+def plot_multiclass_roc(model, dataloader, device, num_classes=3, class_names=None, model_name="model", save_path=None):
+    """
+    Plots and saves a multiclass ROC curve for classification models.
+    
+    The Receiver Operating Characteristic (ROC) curve visualizes the trade-off
+    between true positive rate and false positive rate at various thresholds.
+    
+    Args:
+        model (torch.nn.Module): The trained model
+        dataloader (DataLoader): DataLoader for the dataset to evaluate
+        device (torch.device): The device to run inference on
+        num_classes (int): Number of classes in the classification task
+        class_names (list): List of class names for better visualization
+        model_name (str): Model name for saving the plot
+        save_path (str, optional): Path to save the plot
+    
+    Returns:
+        dict: Dictionary containing AUC scores for each class
+    """
+    model.eval()
+    y_true = []
+    y_score = []
+
+    with torch.no_grad():
+        for inputs, labels in tqdm(dataloader, desc="Computing ROC curves"):
+            inputs = inputs.to(device)
+            outputs = model(inputs).cpu().numpy()
+            y_score.extend(outputs)
+            y_true.extend(labels.numpy())
+
+    y_score = np.array(y_score)
+    y_true = np.array(y_true)
+
+    # Binarize the labels for one-vs-rest ROC calculation
+    y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
+
+    # Calculate ROC curve and ROC area for each class
+    fpr, tpr, roc_auc = {}, {}, {}
+    for i in range(num_classes):
+        fpr[i], tpr[i], _ = roc_curve(y_true_bin[:, i], y_score[:, i])
+        roc_auc[i] = auc(fpr[i], tpr[i])
+
+    # Calculate micro-average ROC curve and ROC area
+    fpr["micro"], tpr["micro"], _ = roc_curve(y_true_bin.ravel(), y_score.ravel())
+    roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+
+    # Plot the ROC curves
+    plt.figure(figsize=(10, 6))
+    # Plot micro-average ROC curve
+    plt.plot(fpr["micro"], tpr["micro"],
+             label=f'Micro-average (AUC = {roc_auc["micro"]:.2f})',
+             color='navy', linestyle=':', linewidth=2)
+    
+    # Plot ROC curve for each class
+    for i in range(num_classes):
+        label = class_names[i] if class_names else f'Class {i}'
+        plt.plot(fpr[i], tpr[i], label=f'{label} (AUC = {roc_auc[i]:.2f})')
+
+    # Plot the diagonal reference line
+    plt.plot([0, 1], [0, 1], 'k--', lw=2)
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC Curve - Multi-Class Classification')
+    plt.legend(loc='lower right')
+    plt.grid(True)
+    plt.tight_layout()
+    
+    if save_path:
+        ensure_dir(os.path.dirname(save_path) if os.path.dirname(save_path) else "plots")
+        plt.savefig(save_path)
+    else:
+        save_path = f"plots/ROC_{model_name}.png"
+        ensure_dir("plots")
+        plt.savefig(save_path)
+        plt.show()
+    
+    print(f"[ROC] Saved ROC plot to: {save_path}")
+    return roc_auc
+
+
+def plot_precision_recall_curves(model, dataloader, device, num_classes=3, class_names=None, model_name="model", save_path=None):
+    """
+    Plots and saves precision-recall curves for multi-class classification.
+    
+    The precision-recall curve shows the trade-off between precision and recall
+    for different thresholds. It is particularly useful for imbalanced datasets.
+    
+    Args:
+        model (torch.nn.Module): The trained model
+        dataloader (DataLoader): DataLoader for the dataset to evaluate
+        device (torch.device): The device to run inference on
+        num_classes (int): Number of classes in the classification task
+        class_names (list): List of class names for better visualization
+        model_name (str): Model name for saving the plot
+        save_path (str, optional): Path to save the plot
+    
+    Returns:
+        dict: Dictionary containing average precision scores for each class
+    """
+    # Collect predictions
+    y_true, _, y_scores = collect_predictions(model, dataloader, device)
+    
+    # Binarize the labels for one-vs-rest precision-recall calculation
+    y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
+    
+    # Calculate precision-recall curve and average precision for each class
+    precision, recall, average_precision = {}, {}, {}
+    for i in range(num_classes):
+        precision[i], recall[i], _ = precision_recall_curve(y_true_bin[:, i], y_scores[:, i])
+        average_precision[i] = average_precision_score(y_true_bin[:, i], y_scores[:, i])
+    
+    # Calculate micro-average precision-recall curve and average precision
+    precision["micro"], recall["micro"], _ = precision_recall_curve(
+        y_true_bin.ravel(), y_scores.ravel())
+    average_precision["micro"] = average_precision_score(
+        y_true_bin.ravel(), y_scores.ravel())
+    
+    # Plot the precision-recall curves
+    plt.figure(figsize=(10, 6))
+    # Plot micro-average precision-recall curve
+    plt.plot(recall["micro"], precision["micro"],
+             label=f'Micro-average (AP = {average_precision["micro"]:.2f})',
+             color='navy', linestyle=':', linewidth=2)
+    
+    # Plot precision-recall curve for each class
+    for i in range(num_classes):
+        label = class_names[i] if class_names else f'Class {i}'
+        plt.plot(recall[i], precision[i],
+                 label=f'{label} (AP = {average_precision[i]:.2f})')
+    
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall Curve - Multi-Class Classification')
+    plt.legend(loc='best')
+    plt.grid(True)
+    plt.tight_layout()
+    
+    if save_path:
+        ensure_dir(os.path.dirname(save_path) if os.path.dirname(save_path) else "plots")
+        plt.savefig(save_path)
+    else:
+        save_path = f"plots/PR_Curve_{model_name}.png"
+        ensure_dir("plots")
+        plt.savefig(save_path)
+        plt.show()
+    
+    print(f"[PR Curve] Saved precision-recall curve plot to: {save_path}")
+    return average_precision
+
+
+def plot_per_class_metrics(y_true, y_pred, class_names, save_path=None):
+    """
+    Plots a comparison of precision, recall, and F1-score for each class.
+    
+    Args:
+        y_true (list): True class labels
+        y_pred (list): Predicted class labels
+        class_names (list): List of class names
+        save_path (str, optional): Path to save the plot
+    """
+    # Calculate precision, recall, and F1-score for each class
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        y_true, y_pred, average=None, labels=range(len(class_names)))
+    
+    # Also calculate accuracy per class
+    class_accs = []
+    for cls in range(len(class_names)):
+        mask = np.array(y_true) == cls
+        if np.sum(mask) > 0:  # Avoid division by zero
+            acc = accuracy_score(np.array(y_true)[mask], np.array(y_pred)[mask])
+            class_accs.append(acc)
+        else:
+            class_accs.append(0.0)
+    
+    # Create a DataFrame for easier plotting
+    import pandas as pd
+    metrics_df = pd.DataFrame({
+        'Class': class_names,
+        'Precision': precision,
+        'Recall': recall,
+        'F1-Score': f1,
+        'Accuracy': class_accs
+    })
+    
+    # Plot the metrics
+    plt.figure(figsize=(12, 6))
+    
+    # Plot as grouped bar chart
+    bar_width = 0.2
+    index = np.arange(len(class_names))
+    
+    plt.bar(index - 1.5*bar_width, metrics_df['Precision'], bar_width, label='Precision')
+    plt.bar(index - 0.5*bar_width, metrics_df['Recall'], bar_width, label='Recall')
+    plt.bar(index + 0.5*bar_width, metrics_df['F1-Score'], bar_width, label='F1-Score')
+    plt.bar(index + 1.5*bar_width, metrics_df['Accuracy'], bar_width, label='Accuracy')
+    
+    plt.xlabel('Class')
+    plt.ylabel('Score')
+    plt.title('Per-Class Performance Metrics')
+    plt.xticks(index, class_names)
+    plt.ylim(0, 1.1)
+    plt.legend()
+    plt.grid(True, axis='y')
+    plt.tight_layout()
+    
+    if save_path:
+        ensure_dir(os.path.dirname(save_path) if os.path.dirname(save_path) else "plots")
+        plt.savefig(save_path)
+    else:
+        save_path = "plots/per_class_metrics.png"
+        ensure_dir("plots")
+        plt.savefig(save_path)
+        plt.show()
+    
+    print(f"[Per-Class Metrics] Saved metrics plot to: {save_path}")
+    return metrics_df
+
+
+def plot_per_class_accuracy(y_true, y_pred, class_names, save_path=None):
+    """
+    Plots a bar chart of accuracy per class.
+    
+    Args:
+        y_true (list): True class labels
+        y_pred (list): Predicted class labels
+        class_names (list): List of class names
+        save_path (str, optional): Path to save the plot
+    
+    Returns:
+        numpy.ndarray: Array of per-class accuracies
+    """
+    class_accs = []
+    for cls in range(len(class_names)):
+        mask = np.array(y_true) == cls
+        if np.sum(mask) > 0:  # Avoid division by zero
+            acc = accuracy_score(np.array(y_true)[mask], np.array(y_pred)[mask])
+            class_accs.append(acc)
+        else:
+            class_accs.append(0.0)
+
+    plt.figure(figsize=(10, 6))
+    bars = plt.bar(class_names, class_accs, color='skyblue')
+    plt.ylim(0, 1.1)
+    plt.ylabel("Accuracy")
+    plt.xlabel("Class")
+    plt.title("Per-Class Accuracy")
+    plt.grid(True, axis='y')
+    
+    # Add value labels above each bar
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height + 0.02,
+                 f'{height:.3f}', ha='center', va='bottom', rotation=0)
+    
+    # Add overall accuracy as a horizontal line
+    overall_acc = accuracy_score(y_true, y_pred)
+    plt.axhline(y=overall_acc, color='r', linestyle='--', 
+                label=f'Overall Accuracy: {overall_acc:.3f}')
+    
+    # Add balanced accuracy as another horizontal line
+    balanced_acc = balanced_accuracy_score(y_true, y_pred)
+    plt.axhline(y=balanced_acc, color='g', linestyle='--',
+                label=f'Balanced Accuracy: {balanced_acc:.3f}')
+    
+    plt.legend()
+    plt.tight_layout()
+    
+    if save_path:
+        ensure_dir(os.path.dirname(save_path) if os.path.dirname(save_path) else "plots")
+        plt.savefig(save_path)
+    else:
+        save_path = "plots/per_class_accuracy.png"
+        ensure_dir("plots")
+        plt.savefig(save_path)
+        plt.show()
+    
+    print(f"[Accuracy] Saved per-class accuracy plot to: {save_path}")
+    return np.array(class_accs)
+
+
+def plot_confusion_matrix(model, dataloader, device, class_names=None, normalize=False, save_path=None):
+    """
+    Plots a confusion matrix for the model predictions on the given dataloader.
+    
+    Args:
+        model (torch.nn.Module): The trained model
+        dataloader (DataLoader): DataLoader for the dataset to evaluate
+        device (torch.device): The device to run inference on
+        class_names (list, optional): List of class names for better visualization
+        normalize (bool): Whether to normalize confusion matrix values
+        save_path (str, optional): Path to save the plot
+    
+    Returns:
+        numpy.ndarray: The confusion matrix
+    """
+    model.eval()
+    y_true, y_pred = [], []
+    
+    with torch.no_grad():
+        for inputs, labels in tqdm(dataloader, desc="Computing confusion matrix"):
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, preds = torch.max(outputs, 1)
+            y_true.extend(labels.cpu().numpy())
+            y_pred.extend(preds.cpu().numpy())
+
+    cm = confusion_matrix(y_true, y_pred)
+    
+    # Normalize the confusion matrix if requested
+    if normalize:
+        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        fmt = '.2f'
+        title_suffix = " (Normalized)"
+    else:
+        fmt = 'd'
+        title_suffix = ""
+    
+    # Plot the confusion matrix
+    plt.figure(figsize=(10, 8))
+    disp = ConfusionMatrixDisplay(
+        confusion_matrix=cm, 
+        display_labels=class_names
+    )
+    disp.plot(cmap='Blues', values_format=fmt)
+    plt.title(f"Confusion Matrix{title_suffix}")
+    plt.grid(False)
+    plt.tight_layout()
+    
+    if save_path:
+        ensure_dir(os.path.dirname(save_path) if os.path.dirname(save_path) else "plots")
+        plt.savefig(save_path)
+    else:
+        norm_str = "_normalized" if normalize else ""
+        save_path = f"plots/confusion_matrix{norm_str}.png"
+        ensure_dir("plots")
+        plt.savefig(save_path)
+        plt.show()
+    
+    print(f"[Confusion Matrix] Saved to: {save_path}")
+    return cm
+
+
+def plot_predictions(model, data_loader, class_names, device, num_samples=32, save_path=None):
+    """
+    Plot a grid of images with their predicted and true labels.
+    
+    Args:
+        model (torch.nn.Module): The trained model
+        data_loader (DataLoader): DataLoader for the dataset to inspect
+        class_names (list): List of class names
+        device (torch.device): The device to run inference on
+        num_samples (int): Number of samples to display
+        save_path (str, optional): Path to save the plot
+    """
+    model.eval()  # Set the model to evaluation mode
+    
+    # Get a batch of images and labels
+    all_images = []
+    all_labels = []
+    all_preds = []
+    all_probs = []
+    
+    with torch.no_grad():
+        for inputs, labels in data_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            probs = torch.nn.functional.softmax(outputs, dim=1)
+            confidences, preds = torch.max(probs, 1)
+            
+            all_images.extend(inputs.cpu())
+            all_labels.extend(labels.cpu())
+            all_preds.extend(preds.cpu())
+            all_probs.extend(confidences.cpu())
+            
+            if len(all_images) >= num_samples:
+                break
+    
+    # Limit to the requested number of samples
+    all_images = all_images[:num_samples]
+    all_labels = all_labels[:num_samples]
+    all_preds = all_preds[:num_samples]
+    all_probs = all_probs[:num_samples]
+    
+    # Determine grid size based on number of samples
+    grid_size = int(np.ceil(np.sqrt(len(all_images))))
+    
+    # Plot the images with predicted and true labels
+    fig, axes = plt.subplots(grid_size, grid_size, figsize=(15, 15))
+    axes = axes.flatten()
+    
+    for i, (img, label, pred, prob) in enumerate(zip(all_images, all_labels, all_preds, all_probs)):
+        if i >= len(axes):  # Stop if there are more images than grid slots
+            break
+            
+        img = img.permute(1, 2, 0).numpy()  # Convert from (C, H, W) to (H, W, C)
+        img = np.clip(img, 0, 1)  # Ensure pixel values are in [0, 1]
+        
+        # Color-code the title based on prediction correctness
+        if label == pred:
+            color = 'green'  # Correct prediction
+        else:
+            color = 'red'    # Incorrect prediction
+            
+        axes[i].imshow(img)
+        axes[i].axis('off')
+        title = f"True: {class_names[label]}\nPred: {class_names[pred]}\nConf: {prob:.2f}"
+        axes[i].set_title(title, fontsize=8, color=color)
+    
+    # Hide unused subplots
+    for i in range(len(all_images), len(axes)):
+        axes[i].axis('off')
+    
+    plt.suptitle("Model Predictions", fontsize=16)
+    plt.tight_layout()
+    
+    if save_path:
+        ensure_dir(os.path.dirname(save_path) if os.path.dirname(save_path) else "plots")
+        plt.savefig(save_path)
+    else:
+        save_path = "plots/predictions_grid.png"
+        ensure_dir("plots")
+        plt.savefig(save_path)
+        plt.show()
+    
+    print(f"[Predictions] Saved predictions grid to: {save_path}")
+
+
+def plot_calibration_curve(model, dataloader, device, num_classes, class_names=None, n_bins=10, save_path=None):
+    """
+    Plot reliability diagram (calibration curve) for the model.
+    
+    A well-calibrated model should have predicted probabilities that match
+    the observed frequencies. This function plots this relationship.
+    
+    Args:
+        model (torch.nn.Module): The trained model
+        dataloader (DataLoader): DataLoader for the dataset to evaluate
+        device (torch.device): The device to run inference on
+        num_classes (int): Number of classes in the classification task
+        class_names (list): List of class names for better visualization
+        n_bins (int): Number of bins for the calibration curve
+        save_path (str, optional): Path to save the plot
+    
+    Returns:
+        tuple: (prob_true, prob_pred) containing the calibration curve data
+    """
+    # Collect predictions
+    y_true, _, y_scores = collect_predictions(model, dataloader, device)
+    
+    # Convert logits to probabilities
+    y_probs = torch.nn.functional.softmax(torch.tensor(y_scores), dim=1).numpy()
+    
+    plt.figure(figsize=(10, 8))
+    
+    # Plot the calibration curve for each class
+    for i in range(num_classes):
+        # One-hot encode for current class
+        y_true_bin = (y_true == i).astype(int)
+        
+        # Get the probability for the current class
+        y_prob = y_probs[:, i]
+        
+        # Calculate calibration curve
+        prob_true, prob_pred = calibration_curve(y_true_bin, y_prob, n_bins=n_bins)
+        
+        # Plot calibration curve
+        class_name = class_names[i] if class_names else f"Class {i}"
+        plt.plot(prob_pred, prob_true, marker='o', linewidth=2, 
+                 label=f'{class_name}')
+    
+    # Plot the diagonal line (perfect calibration)
+    plt.plot([0, 1], [0, 1], linestyle='--', color='gray', 
+             label='Perfectly calibrated')
+    
+    plt.xlabel('Mean predicted probability')
+    plt.ylabel('Fraction of positives')
+    plt.title('Calibration Curve (Reliability Diagram)')
+    plt.legend(loc='best')
+    plt.grid(True)
+    plt.tight_layout()
+    
+    if save_path:
+        ensure_dir(os.path.dirname(save_path) if os.path.dirname(save_path) else "plots")
+        plt.savefig(save_path)
+    else:
+        save_path = "plots/calibration_curve.png"
+        ensure_dir("plots")
+        plt.savefig(save_path)
+        plt.show()
+    
+    print(f"[Calibration] Saved calibration curve to: {save_path}")
+    return prob_true, prob_pred
+
+
+def classification_summary(model, dataloader, criterion, device='cuda', class_names=None):
+    """
+    Generate a comprehensive classification summary for the model.
+    
+    Args:
+        model (torch.nn.Module): The trained model
+        dataloader (DataLoader): DataLoader for the dataset to evaluate
+        criterion: Loss function
+        device (torch.device): The device to run inference on
+        class_names (list, optional): List of class names for reporting
+    
+    Returns:
+        tuple: (avg_loss, accuracy, y_true, y_pred) with evaluation metrics and data
+    """
+    model.eval()
+    y_true, y_pred = [], []
+    running_loss = 0.0
+    correct = 0
+    total = 0
+    
+    # Store prediction probabilities for calibration analysis
+    y_probs = []
+
+    with torch.no_grad():
+        for inputs, labels in tqdm(dataloader, desc="Evaluating model"):
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            
+            # Get predicted class and probabilities
+            probs = torch.nn.functional.softmax(outputs, dim=1)
+            _, preds = torch.max(outputs, 1)
+            
+            # Accumulate metrics
+            running_loss += loss.item() * inputs.size(0)
+            correct += torch.sum(preds == labels.data).item()
+            total += labels.size(0)
+            
+            # Store true labels, predictions and probabilities
+            y_true.extend(labels.cpu().numpy())
+            y_pred.extend(preds.cpu().numpy())
+            y_probs.extend(probs.cpu().numpy())
+
+    # Calculate overall metrics
+    avg_loss = running_loss / total
+    accuracy = correct / total
+    balanced_acc = balanced_accuracy_score(y_true, y_pred)
+    
+    # Print classification report
+    print("\n--- Classification Report ---")
+    if class_names:
+        print(classification_report(y_true, y_pred, target_names=class_names, digits=4))
+    else:
+        print(classification_report(y_true, y_pred))
+    
+    # Additional metrics
+    print(f"\nOverall Accuracy: {accuracy:.4f}")
+    print(f"Balanced Accuracy: {balanced_acc:.4f}")
+    print(f"Average Loss: {avg_loss:.4f}")
+    
+    # Calculate per-class precision, recall, and F1
+    precision, recall, f1, support = precision_recall_fscore_support(
+        y_true, y_pred, average=None)
+    
+    # Create a summary DataFrame
+    import pandas as pd
+    summary_df = pd.DataFrame({
+        'Class': class_names if class_names else [f'Class {i}' for i in range(len(precision))],
+        'Precision': precision,
+        'Recall': recall,
+        'F1-Score': f1,
+        'Support': support
+    })
+    
+    print("\n--- Per-Class Metrics ---")
+    print(summary_df.to_string(index=False))
+    
+    return avg_loss, accuracy, y_true, y_pred
+
+
+def plot_entropy_hist(entropies_known, entropies_unknown, save_path=None):
+    """
+    Plot histogram of entropy values for known vs unknown classes.
+    
+    Entropy is a measure of prediction uncertainty. Higher entropy values
+    indicate less certain predictions. This function compares the entropy
+    distributions between known and unknown classes.
+    
+    Args:
+        entropies_known (array-like): Entropy values for known class predictions
+        entropies_unknown (array-like): Entropy values for unknown class predictions
+        save_path (str, optional): Path to save the plot
+    
+    Returns:
+        float: Threshold value that could potentially separate known from unknown
+    """
+    plt.figure(figsize=(10, 6))
+    
+    # Plot histograms with density curve
+    sns.histplot(entropies_known, bins=50, kde=True, label='Known Classes', 
+                 color='blue', stat='density', alpha=0.6)
+    sns.histplot(entropies_unknown, bins=50, kde=True, label='Unknown Class', 
+                 color='red', stat='density', alpha=0.6)
+    
+    # Calculate and display means
+    mean_known = np.mean(entropies_known)
+    mean_unknown = np.mean(entropies_unknown)
+    std_known = np.std(entropies_known)
+    std_unknown = np.std(entropies_unknown)
+
+    plt.axvline(mean_known, color='blue', linestyle='--', 
+                label=f'Mean Known: {mean_known:.3f} ± {std_known:.3f}')
+    plt.axvline(mean_unknown, color='red', linestyle='--', 
+                label=f'Mean Unknown: {mean_unknown:.3f} ± {std_unknown:.3f}')
+
+    # Calculate a potential threshold for separating known/unknown
+    # Using a simple approach: the midpoint between means
+    threshold = (mean_known + mean_unknown) / 2
+    plt.axvline(threshold, color='green', linestyle='-.',
+                label=f'Potential Threshold: {threshold:.3f}')
+
+    plt.xlabel('Prediction Entropy')
+    plt.ylabel('Density')
+    plt.title('Entropy Distribution: Known vs Unknown Classes')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    if save_path:
+        ensure_dir(os.path.dirname(save_path) if os.path.dirname(save_path) else "plots")
+        plt.savefig(save_path)
+    else:
+        save_path = "plots/entropy_distribution.png"
+        ensure_dir("plots")
+        plt.savefig(save_path)
+        plt.show()
+    
+    print(f"[Entropy] Saved entropy distribution plot to: {save_path}")
+    return threshold
+
+
+if __name__ == "__main__":
+    """
+    Example usage of the evaluation module.
+    
+    To use this module directly, uncomment and modify the example code below:
+    
+    import torch
+    from torch.utils.data import DataLoader
+    from torchvision import models
+    import torch.nn as nn
+    
+    # Define your model and load weights
+    model = models.resnet18()
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    model.load_state_dict(torch.load('models/best_model.pth'))
+    
+    # Setup data loader
+    test_loader = DataLoader(test_dataset, batch_size=32)
+    
+    # Define device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    
+    # Define class names
+    class_names = ['Cat', 'Dog', 'Bird']
+    
+    # Generate comprehensive evaluation
+    criterion = nn.CrossEntropyLoss()
+    avg_loss, accuracy, y_true, y_pred = classification_summary(
+        model, test_loader, criterion, device, class_names
+    )
+    
+    # Plot confusion matrix
+    plot_confusion_matrix(model, test_loader, device, class_names=class_names)
+    
+    # Plot ROC curves
+    plot_multiclass_roc(model, test_loader, device, 
+                        num_classes=len(class_names),
+                        class_names=class_names)
+                        
+    # Plot per-class metrics
+    plot_per_class_metrics(y_true, y_pred, class_names)
+    
+    # Plot calibration curve
+    plot_calibration_curve(model, test_loader, device, 
+                          num_classes=len(class_names),
+                          class_names=class_names)
+    """
+    
+    print("This module provides model evaluation tools.")
