@@ -100,7 +100,6 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
 
     # Training loop
     for epoch in range(num_epochs):
-        
         # Track the current learning rate
         current_lr = optimizer.param_groups[0]['lr']
         lr_rates.append(current_lr)
@@ -115,10 +114,13 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
             running_corrects = 0
             total_samples = 0
 
-            # Iterate over data batches
+            # Check if we're using a DataPrefetcher (which already handles device movement)
+            using_prefetcher = hasattr(dataloaders['train'], 'stream') if 'train' in dataloaders else False
+            
+            # And in the data loading section:
             for data in dataloaders[phase]:
                 # Handle different return types (prefetcher vs standard dataloader)
-                if using_prefetcher or isinstance(data, torch.Tensor):
+                if using_prefetcher:
                     # DataPrefetcher already puts data on the right device
                     inputs, labels = data
                 else:
@@ -162,12 +164,15 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
                 global_loop.update(1)
 
             # Calculate epoch statistics
-            epoch_loss = running_loss / total_samples
-            epoch_acc = running_corrects.double() / total_samples
+            if total_samples > 0:
+                epoch_loss = running_loss / total_samples
+                epoch_acc = running_corrects.double() / total_samples
+            else:
+                print(f"Warning: No samples in {phase} phase for epoch {epoch+1}. Using default values.")
+                epoch_loss = float('inf') if phase == 'train' else best_loss
+                epoch_acc = 0.0 if phase == 'train' else best_acc
 
-            # Rest of the code remains the same...
-
-            # Store validation metrics
+            # Store phase metrics
             if phase == 'val':
                 val_accuracies.append(epoch_acc.item())
                 val_losses.append(epoch_loss)
@@ -179,14 +184,14 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler=None, device
                     best_acc = epoch_acc
                     best_model_wts = copy.deepcopy(model.state_dict())
                     best_epoch = epoch  # Update the best epoch tracker
-                
-                # Uncomment to show patience counter when no improvement
-                # else:
-                #     # Print patience remaining if no improvement
-                #     tqdm.write(f"Patience remaining: {patience - (epoch - best_epoch)}")
             else:
                 # Store training metrics
                 train_losses.append(epoch_loss)
+                
+            # Force memory cleanup after each phase
+            torch.cuda.empty_cache()
+            import gc
+            gc.collect()
 
         # Step the ReduceLROnPlateau scheduler after validation
         if scheduler is not None:

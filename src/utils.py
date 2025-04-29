@@ -84,204 +84,127 @@ class ImageDataset(Dataset):
             return img
 
 
-def create_dataloaders(
-    train_dataset=None,
-    val_dataset=None,
-    batch_size=32,
-    num_workers=None,
-    pin_memory=True,
-    mode='both',
-    shuffle_train=True,
-    shuffle_val=False,
-    prefetch_factor=2,
-    use_prefetcher=True
-):
+def create_dataloaders(train_ds, val_ds, batch_size=32, num_workers=None, pin_memory=True,
+                     mode='both', shuffle_train=True, shuffle_val=False,
+                     use_prefetcher=False, prefetch_factor=2, persistent_workers=True):
     """
-    Creates optimized PyTorch dataloaders for training and/or validation.
-
-    Args:
-        train_dataset (Dataset): Dataset for training
-        val_dataset (Dataset): Dataset for validation
-        batch_size (int): Batch size for loading
-        num_workers (int, optional): CPU workers for data loading. If None, will use CPU count.
-        pin_memory (bool): Whether to pin memory (recommended for GPU training)
-        mode (str): 'train', 'val', or 'both' – selects which loaders to return
-        shuffle_train (bool): Whether to shuffle training data
-        shuffle_val (bool): Whether to shuffle validation data
-        prefetch_factor (int): Number of batches to prefetch per worker
-        use_prefetcher (bool): Whether to use data prefetcher for faster GPU transfers
-
-    Returns:
-        dict: Dictionary containing one or both of the keys: 'train', 'val'
-    """    
-    if num_workers is None:
-        # Use CPU count as a reasonable default
-        num_workers = min(os.cpu_count(), 8)  # Limit to 8 as more rarely helps
+    Create dataloaders for training and validation.
     
-    # Common DataLoader parameters
-    loader_kwargs = {
+    Args:
+        train_ds: Training dataset
+        val_ds: Validation dataset
+        batch_size: Batch size
+        num_workers: Number of worker processes
+        pin_memory: Whether to pin memory (faster data transfer to CUDA)
+        mode: 'train', 'val', or 'both'
+        shuffle_train: Whether to shuffle training data
+        shuffle_val: Whether to shuffle validation data
+        use_prefetcher: Whether to use custom prefetcher (set to False to use PyTorch's)
+        prefetch_factor: Number of batches to prefetch (for PyTorch's prefetcher)
+        persistent_workers: Keep workers alive between epochs
+    
+    Returns:
+        Dictionary containing dataloaders
+    """
+    loaders = {}
+    
+    if num_workers is None:
+        num_workers = min(8, os.cpu_count())
+    
+    dataloader_args = {
         'batch_size': batch_size,
         'num_workers': num_workers,
-        'pin_memory': pin_memory and torch.cuda.is_available(),
-        'persistent_workers': num_workers > 0,
+        'pin_memory': pin_memory,
+        'prefetch_factor': prefetch_factor if num_workers > 0 else None,
+        'persistent_workers': persistent_workers if num_workers > 0 else False
     }
-    
-    # Only use prefetch_factor if num_workers > 0
-    if num_workers > 0:
-        loader_kwargs['prefetch_factor'] = prefetch_factor
 
-    loaders = {}
-
-    if mode in ['train', 'both']:
-        assert train_dataset is not None, "train_dataset must be provided when mode is 'train' or 'both'"
+    # Create DataLoader for training set
+    if mode in ['train', 'both'] and train_ds is not None:
         train_loader = DataLoader(
-            train_dataset,
+            train_ds,
             shuffle=shuffle_train,
-            **loader_kwargs
+            **dataloader_args
         )
-        
-        # Wrap with prefetcher if requested and CUDA is available
-        if use_prefetcher and torch.cuda.is_available():
+        if use_prefetcher:
+            # Only use custom prefetcher if explicitly requested
             train_loader = DataPrefetcher(train_loader)
-            
         loaders['train'] = train_loader
 
-    if mode in ['val', 'both']:
-        assert val_dataset is not None, "val_dataset must be provided when mode is 'val' or 'both'"
+    # Create DataLoader for validation set
+    if mode in ['val', 'both'] and val_ds is not None:
         val_loader = DataLoader(
-            val_dataset,
+            val_ds,
             shuffle=shuffle_val,
-            **loader_kwargs
+            **dataloader_args
         )
-        
-        # Use prefetcher for validation as well if requested
-        if use_prefetcher and torch.cuda.is_available():
+        if use_prefetcher:
+            # Only use custom prefetcher if explicitly requested
             val_loader = DataPrefetcher(val_loader)
-            
         loaders['val'] = val_loader
 
     return loaders
-
 class DataPrefetcher:
     """
-    Data prefetcher to speed up data loading by prefetching the next batch 
-    while the GPU is processing the current batch.
+    GPU-optimized data prefetcher that moves data to GPU immediately to reduce host RAM usage.          !!!!!!!!!!!!!!!!!!!!!!!!!!
+                    !!!USE AT YOUR OWN PERIL!!
+                    !!!!!!!!!!!!!!!!!!!!!!!!!!
+    This implementation is inspired by NVIDIA's approach described in:
+    https://developer.nvidia.com/blog/how-optimize-data-transfers-cuda-cc/, but it did not work quite as expected.
     """
     def __init__(self, loader):
         self.loader = iter(loader)
         self.stream = torch.cuda.Stream()
         self.next_data = None
+        self.loader_len = len(loader) if hasattr(loader, '__len__') else None
         self.preload()
         
-        # Store the original loader length for __len__
-        self.loader_len = len(loader) if hasattr(loader, '__len__') else None
-
     def preload(self):
         try:
-            self.next_data = next(self.loader)
+            data = next(self.loader)
+            
+            # Move to GPU immediately to free CPU memory
+            with torch.cuda.stream(self.stream):
+                if isinstance(data, (list, tuple)):
+                    self.next_data = []
+                    for item in data:
+                        if torch.is_tensor(item):
+                            # Move tensor to GPU immediately
+                            self.next_data.append(item.cuda(non_blocking=True))
+                            # Force deletion of CPU copy
+                            del item
+                        else:
+                            self.next_data.append(item)
+                    self.next_data = tuple(self.next_data) if isinstance(data, tuple) else self.next_data
+                else:
+                    self.next_data = data.cuda(non_blocking=True)
+                    del data
+                
+                # Force garbage collection to free CPU memory immediately
+                torch.cuda.empty_cache()
+                
         except StopIteration:
             self.next_data = None
-            return
         except Exception as e:
-            # Print the error but allow the training to continue
-            print(f"WARNING: Error in DataPrefetcher.preload(): {str(e)}")
+            print(f"Error in DataPrefetcher: {str(e)}")
             self.next_data = None
-            return
-        
-        # Preload next batch in a non-blocking way
-        try:
-            with torch.cuda.stream(self.stream):
-                if isinstance(self.next_data, list) or isinstance(self.next_data, tuple):
-                    self.next_data = [
-                        item.cuda(non_blocking=True) if torch.is_tensor(item) else item
-                        for item in self.next_data
-                    ]
-                else:
-                    self.next_data = self.next_data.cuda(non_blocking=True)
-        except Exception as e:
-            print(f"WARNING: Error transferring data to GPU in DataPrefetcher: {str(e)}")
-            # Attempt a fallback to synchronous transfer
-            try:
-                if isinstance(self.next_data, list) or isinstance(self.next_data, tuple):
-                    self.next_data = [
-                        item.cuda() if torch.is_tensor(item) else item
-                        for item in self.next_data
-                    ]
-                else:
-                    self.next_data = self.next_data.cuda()
-            except Exception:
-                # If even the fallback fails, return None
-                self.next_data = None
-
-    def __iter__(self):
-        return self
-
+    
     def __next__(self):
-        if self.next_data is None:
+        torch.cuda.current_stream().wait_stream(self.stream)
+        data = self.next_data
+        if data is None:
             raise StopIteration
             
-        # Use try/except to handle potential errors
-        try:
-            torch.cuda.current_stream().wait_stream(self.stream)
-            data = self.next_data
-            self.preload()
-            return data
-        except Exception as e:
-            print(f"ERROR in DataPrefetcher.__next__(): {str(e)}")
-            self.preload()  # Try to recover for the next iteration
-            raise StopIteration  # Skip this batch
+        # Preload next batch
+        self.preload()
+        return data
+    
+    def __iter__(self):
+        return self
     
     def __len__(self):
         return self.loader_len if self.loader_len is not None else 0
-# class DataPrefetcher:
-#     """
-#     Data prefetcher to speed up data loading by prefetching the next batch 
-#     while the GPU is processing the current batch.
-    
-#     This implementation is inspired by NVIDIA's approach described in:
-#     https://developer.nvidia.com/blog/how-optimize-data-transfers-cuda-cc/
-    
-#     The prefetcher uses CUDA streams to overlap data transfer with computation,
-#     which can significantly reduce training time by hiding data loading latency.
-    
-#     Adapted from PyTorch examples and NVIDIA Apex utility code.
-#     """
-#     def __init__(self, loader):
-#         self.loader = iter(loader)
-#         self.stream = torch.cuda.Stream()
-#         self.next_data = None
-#         self.preload()
 
-#     def preload(self):
-#         try:
-#             self.next_data = next(self.loader)
-#         except StopIteration:
-#             self.next_data = None
-#             return
-        
-#         # Preload next batch in a non-blocking way
-#         with torch.cuda.stream(self.stream):
-#             if isinstance(self.next_data, list) or isinstance(self.next_data, tuple):
-#                 self.next_data = [
-#                     item.cuda(non_blocking=True) if torch.is_tensor(item) else item
-#                     for item in self.next_data
-#                 ]
-#             else:
-#                 self.next_data = self.next_data.cuda(non_blocking=True)
-
-#     def __iter__(self):
-#         return self
-
-#     def __next__(self):
-#         torch.cuda.current_stream().wait_stream(self.stream)
-#         data = self.next_data
-#         if data is None:
-#             raise StopIteration
-#         self.preload()
-#         return data
-    
-#     def __len__(self):
-#         return len(self.loader)
 # ------------------------------------------------------------------------------
 # Data Loading and Processing
 # ------------------------------------------------------------------------------
