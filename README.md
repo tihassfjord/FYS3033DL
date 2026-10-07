@@ -1,4 +1,4 @@
-# 🧠 FYS-3033 Home Exam – Deep Learning Image Classifier
+# FYS-3033 Home Exam – Deep Learning Image Classifier
 
 This project contains my submission for the home exam in FYS-3033 at UiT, Spring 2025.
 
@@ -6,7 +6,7 @@ I build a **VGG-11 with BatchNorm**, trained **from scratch**, to classify 96×9
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 FYS3033DL/
@@ -26,7 +26,7 @@ FYS3033DL/
 
 ---
 
-## 📦 Contents
+## Contents
 
 - **Problem 2**: Train VGG-11 from scratch on a labeled dataset (planes/ships/trucks).
 - **Problem 3**: Train a ResNet-18 and perform backdoor detection using saliency maps & occlusion.
@@ -35,7 +35,7 @@ All models are trained without using pretrained weights or torchvision shortcuts
 
 ---
 
-## 🚀 Running the Code
+## Running the Code
 
 1. Clone the repo and set up your Python env (Python 3.10+):
    ```bash
@@ -55,7 +55,7 @@ All models are trained without using pretrained weights or torchvision shortcuts
 
 ---
 
-## ✍️ Author
+## Author
 
 **Tor-Ivar Hassfjord**  
 Candidate number XX · UiT — The Arctic University of Norway  
